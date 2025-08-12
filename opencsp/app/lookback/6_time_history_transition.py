@@ -1,0 +1,535 @@
+from datetime import datetime, timedelta
+import subprocess
+import re
+import json
+import gzip
+from tkinter import Tk
+from tkinter.filedialog import askopenfilename
+from concurrent.futures import ProcessPoolExecutor, as_completed
+import os
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.widgets import RectangleSelector
+from PIL import Image
+from tqdm import tqdm
+
+
+def save_checkpoint(checkpoint_folder, checkpoint_file_name, checkpoint_data):
+    """
+    Saves the checkpoint data to a JSON file.
+
+    Parameters:
+        checkpoint_file_name (str): Path to the checkpoint file.
+        checkpoint_data (dict): Dictionary containing checkpoint information.
+
+    Returns:
+        None
+    """
+    with open(os.path.join(checkpoint_folder, checkpoint_file_name), 'w') as f:
+        json.dump(checkpoint_data, f, indent=4)
+    print(f"Checkpoint saved to {os.path.join(checkpoint_folder, checkpoint_file_name)}")
+
+
+def load_checkpoint(checkpoint_folder, checkpoint_file_name):
+    """
+    Loads the checkpoint data from a JSON file.
+
+    Parameters:
+        checkpoint_file_name (str): Path to the checkpoint file.
+
+    Returns:
+        dict: Dictionary containing checkpoint information.
+    """
+    if os.path.exists(os.path.join(checkpoint_folder, checkpoint_file_name)):
+        with open(os.path.join(checkpoint_folder, checkpoint_file_name), 'r') as f:
+            checkpoint_data = json.load(f)
+        print(f"Checkpoint loaded from {os.path.join(checkpoint_folder, checkpoint_file_name)}")
+        return checkpoint_data
+    else:
+        return None
+
+
+def read_compressed_json(file_path):
+    """
+    Reads a compressed JSON file (.json.gz) and returns the data.
+
+    Parameters:
+        file_path (str): Path to the .json.gz file.
+
+    Returns:
+        list: List of dictionaries containing the data from the file.
+    """
+    try:
+        with gzip.open(file_path, 'rt', encoding='utf-8') as f:
+            data = json.load(f)
+        return data
+    except Exception as e:
+        print(f"Error reading file {file_path}: {e}")
+        return None
+
+
+def write_compressed_json(data, file_path):
+    """
+    Writes data to a compressed JSON file (.json.gz).
+
+    Parameters:
+        data (dict or list): Data to write to the file.
+        file_path (str): Path to the .json.gz file.
+
+    Returns:
+        None
+    """
+    with gzip.open(file_path, 'wt', encoding='utf-8') as f:
+        json.dump(data, f, indent=4)
+    print(f"Data written to {file_path}")
+
+
+def process_json_file_within_batch(json_file, pixel_locations):
+    """
+    Processes a single .json.gz file to analyze pixel brightness transitions within the batch.
+
+    Parameters:
+        json_file (str): Path to the .json.gz file.
+        pixel_locations (list of tuple): List of pixel locations to interrogate.
+
+    Returns:
+        dict: Results for the pixel transitions within the batch.
+    """
+    # Read the compressed JSON file
+    data = read_compressed_json(json_file)
+
+    # Initialize a dictionary to store results for each pixel
+    pixel_results = {str(pixel): [] for pixel in pixel_locations}  # Convert tuple keys to strings
+
+    # Iterate over the images in the batch
+    for i in range(len(data) - 1):  # Compare each image with the next one
+        current_entry = data[i]
+        next_entry = data[i + 1]
+
+        current_image_name = current_entry["image_name"]
+        next_image_name = next_entry["image_name"]
+
+        current_binary_array = np.array(current_entry["binary_array"])  # Convert binary array to NumPy array
+        next_binary_array = np.array(next_entry["binary_array"])  # Convert binary array to NumPy array
+
+        # Compare pixel values between the current image and the next image
+        for pixel in pixel_locations:
+            x, y = pixel  # Pixel coordinates
+
+            # Current and next pixel values
+            current_pixel_value = current_binary_array[x, y]
+            next_pixel_value = next_binary_array[x, y]
+
+            # Bright transition (0 -> 1)
+            if current_pixel_value == 0 and next_pixel_value == 1:
+                pixel_results[str(pixel)].append(
+                    {"transition": "bright", "from_frame": current_image_name, "to_frame": next_image_name}
+                )
+
+            # Dark transition (1 -> 0)
+            if current_pixel_value == 1 and next_pixel_value == 0:
+                pixel_results[str(pixel)].append(
+                    {"transition": "dark", "from_frame": current_image_name, "to_frame": next_image_name}
+                )
+
+    return pixel_results
+
+
+def write_intermediate_results(results, output_folder, batch_index):
+    """
+    Writes intermediate results to disk as a compressed JSON file.
+
+    Parameters:
+        results (dict): Intermediate results for pixel transitions.
+        output_folder (str): Path to the output folder.
+        batch_index (int): Index of the current batch.
+
+    Returns:
+        None
+    """
+    output_file = os.path.join(output_folder, f"batch_{batch_index+1:04d}_results.json.gz")
+    write_compressed_json(results, output_file)
+
+
+def merge_results(output_folder, final_output_file):
+    """
+    Merges all intermediate results into a single compressed JSON file.
+
+    Parameters:
+        output_folder (str): Path to the folder containing intermediate results.
+        final_output_file (str): Path to the final output JSON file.
+
+    Returns:
+        None
+    """
+    merged_results = {}
+
+    # Get all intermediate result files
+    result_files = sorted(
+        [os.path.join(output_folder, f) for f in os.listdir(output_folder) if f.endswith("_results.json.gz")]
+    )
+
+    # Merge results from all files
+    for result_file in result_files:
+        batch_results = read_compressed_json(result_file)
+        for pixel, transitions in batch_results.items():
+            if pixel not in merged_results:
+                merged_results[pixel] = []
+            merged_results[pixel].extend(transitions)
+
+    # Write merged results to the final output file
+    write_compressed_json(merged_results, os.path.join(output_folder, final_output_file))
+
+
+def analyze_pixel_brightness_parallel(
+    json_folder, pixel_locations, output_folder, final_output_file, checkpoint_folder, checkpoint_file_name
+):
+    """
+    Analyzes pixel brightness transitions in parallel and writes results to disk, with checkpoint functionality.
+
+    Parameters:
+        json_folder (str): Path to the folder containing .json.gz files.
+        pixel_locations (list of tuple): List of pixel locations to interrogate.
+        output_folder (str): Path to the folder for intermediate results.
+        final_output_file (str): Path to the final output JSON file.
+        checkpoint_folder (str): Path to the checkpoint file.
+        checkpoint_file_name (str): Checkpoint file name.
+
+    Returns:
+        None
+    """
+    # Ensure the output folder exists
+    os.makedirs(output_folder, exist_ok=True)
+
+    # Get all .json.gz files in the folder, sorted by batch order
+    json_files = sorted([os.path.join(json_folder, f) for f in os.listdir(json_folder) if f.endswith(".json.gz")])
+
+    if not json_files:
+        raise ValueError("No .json.gz files found in the specified folder.")
+
+    # Load checkpoint if it exists
+    checkpoint_data = load_checkpoint(checkpoint_folder, checkpoint_file_name)
+    if checkpoint_data is None:
+        checkpoint_data = {"processed_batches": []}
+
+    # Process files in parallel
+    with ProcessPoolExecutor(max_workers=2) as executor:
+        futures = []
+        for batch_index, json_file in enumerate(json_files):
+            if batch_index in checkpoint_data["processed_batches"]:
+                print(f"Skipping already processed batch {batch_index+1}")
+                continue
+
+            futures.append(executor.submit(process_json_file_within_batch, json_file, pixel_locations))
+
+        # Use tqdm to track progress of futures
+        for batch_index, future in enumerate(
+            tqdm(as_completed(futures), total=len(futures), desc="Processing Batches")
+        ):
+            results = future.result()
+            write_intermediate_results(results, output_folder, batch_index)
+
+            # Update checkpoint
+            checkpoint_data["processed_batches"].append(batch_index)
+            save_checkpoint(checkpoint_folder, checkpoint_file_name, checkpoint_data)
+
+    # Merge intermediate results into a final output file
+    merge_results(output_folder, final_output_file)
+
+
+def extract_video_metadata_exiftool(video_path):
+    """
+    Extracts the media creation date, frame rate, and duration from a video file's metadata using exiftool.
+
+    Parameters:
+        video_path (str): Path to the video file.
+
+    Returns:
+        dict: A dictionary containing:
+            - 'creation_date': Media creation date and time (if available).
+            - 'frame_rate': Frame rate of the video (frames per second, if available).
+            - 'duration': Duration of the video (seconds, if available).
+    """
+    try:
+        # Run exiftool to extract metadata
+        result = subprocess.run(
+            [
+                "exiftool",
+                "-CreateDate",
+                "-MediaCreateDate",
+                "-DateTimeOriginal",
+                "-VideoFrameRate",
+                "-Duration",
+                video_path,
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+
+        # Initialize metadata dictionary
+        metadata = {'creation_date': None, 'frame_rate': None, 'duration': None}
+
+        # Parse the output to find relevant metadata
+        for line in result.stdout.splitlines():
+            if "Create Date" in line or "Media Create Date" in line or "Date/Time Original" in line:
+                metadata['creation_date'] = line.split(": ", 1)[1].strip()
+            elif "Video Frame Rate" in line:
+                metadata['frame_rate'] = float(
+                    line.split(": ", 1)[1].strip().split(" ")[0]
+                )  # Extract frame rate as float
+            elif "Duration" in line:
+                duration_str = line.split(": ", 1)[1].strip()
+                # Convert duration to seconds (e.g., "0:01:23.456" -> 83.456 seconds)
+                parts = duration_str.split(":")
+                if len(parts) == 3:  # Format is hours:minutes:seconds
+                    hours, minutes, seconds = map(float, parts)
+                    metadata['duration'] = hours * 3600 + minutes * 60 + seconds
+                elif len(parts) == 2:  # Format is minutes:seconds
+                    minutes, seconds = map(float, parts)
+                    metadata['duration'] = minutes * 60 + seconds
+
+        return metadata
+    except Exception as e:
+        print(f"Error extracting metadata with exiftool: {e}")
+        return None
+
+
+def create_vertical_slice(image_shape, column_index, row_range=False):
+    """
+    Creates a list of tuples representing a vertical slice of an image.
+
+    Parameters:
+        image_shape (tuple): Shape of the image as (height, width).
+        column_index (int): Horizontal pixel location (column index) for the vertical slice.
+        row_range (bool or tuple): Defaults to False, but if sent as a tuple the list of pixels
+            will be between the two values assuming that the image location starts in the top left.
+            (top, bottom)
+
+    Returns:
+        list of tuple: List of pixel locations (row, column) for the vertical slice.
+    """
+    height, width = image_shape
+
+    # Ensure the column index is within bounds
+    if column_index < 0 or column_index >= width:
+        raise ValueError(f"Column index {column_index} is out of bounds for image width {width}.")
+
+    # Generate the list of tuples for the vertical slice
+    if row_range:
+        vertical_slice = [(row, column_index) for row in range(*row_range)]
+    else:
+        vertical_slice = [(row, column_index) for row in range(height)]
+
+    return vertical_slice
+
+
+def load_image(image_path):
+    """
+    Loads an image and converts it to grayscale.
+
+    Parameters:
+        image_path (str): Path to the image file.
+
+    Returns:
+        np.ndarray: Grayscale image as a NumPy array.
+    """
+    image = Image.open(image_path).convert('L')  # Convert to grayscale
+    return np.array(image)
+
+
+def on_select(eclick, erelease):
+    """
+    Callback function for rectangle selection.
+
+    Parameters:
+        eclick: Mouse click event (start of rectangle).
+        erelease: Mouse release event (end of rectangle).
+    """
+    global selected_pixels
+    x1, y1 = int(eclick.xdata), int(eclick.ydata)
+    x2, y2 = int(erelease.xdata), int(erelease.ydata)
+
+    # Ensure coordinates are in proper order (top-left to bottom-right)
+    x_min, x_max = sorted([x1, x2])
+    y_min, y_max = sorted([y1, y2])
+
+    # Generate list of pixel locations within the selected region
+    selected_pixels = [(y, x) for x in range(x_min, x_max + 1) for y in range(y_min, y_max + 1)]
+    # print(f"Selected pixels: {selected_pixels}")
+
+
+def interactive_image_plot(predefined_pixels=None):
+    """
+    Displays an interactive image plot where users can either load predefined pixel locations
+    or select a region interactively by drawing a rectangle. Prompts for image selection via file dialog.
+
+    Parameters:
+        predefined_pixels (list of tuple, optional): Predefined list of pixel locations (row, column).
+
+    Returns:
+        list of tuple: Selected pixel locations (row, column).
+    """
+    global selected_pixels
+    selected_pixels = []  # Initialize global variable to store selected pixels
+
+    # Prompt user to select an image file using a file dialog
+    Tk().withdraw()  # Hide the root Tkinter window
+    image_path = askopenfilename(
+        title="Select an Image File", filetypes=[("Image Files", "*.png;*.jpg;*.jpeg;*.bmp;*.tiff")]
+    )
+
+    if not image_path:
+        print("No file selected. Exiting.")
+        return []
+
+    print(f"Selected image: {image_path}")
+
+    # Load the image
+    image = load_image(image_path)
+
+    # Create the plot
+    fig, ax = plt.subplots(figsize=(8, 8))
+    ax.imshow(image, cmap='gray', interpolation='nearest')
+    ax.set_title("Interactive Image Plot: Draw a rectangle or load predefined pixels")
+
+    # Display predefined pixels if provided
+    if predefined_pixels:
+        selected_pixels = predefined_pixels
+        for row, col in predefined_pixels:
+            ax.plot(col, row, 'ro', markersize=1, alpha=0.2)  # Mark predefined pixels in red
+
+    # Add rectangle selector for interactive region selection
+    rectangle_selector = RectangleSelector(
+        ax, on_select, useblit=True, button=[1], minspanx=5, minspany=5, spancoords='pixels', interactive=True
+    )
+
+    plt.show()
+
+    return selected_pixels
+
+
+def frame_number_from_img_name(image_name_str):
+    # returns the integer number of a frame given the following format
+    # "DSC_2832-09170.png" where DSC_2832 is the video source and "09170"
+    # is the frame number
+    _, tail = os.path.split(image_name_str)
+    _, frame = re.findall(r'\d+', tail)
+    return int(frame)
+
+
+def create_timing_plots(compiled_json, output_folder, source_image_folder):
+
+    # Ensure the output folder exists
+    os.makedirs(output_folder, exist_ok=True)
+
+    # Get all .json.gz files in the folder, sorted by batch order
+    image_files = sorted(
+        [os.path.join(source_image_folder, f) for f in os.listdir(source_image_folder) if f.lower().endswith(".png")]
+    )
+    if not image_files:
+        raise ValueError("No source image files (.png) found in the specified folder.")
+
+    frames = []
+    for item in image_files:
+        frames.append(frame_number_from_img_name(item))
+    frames = sorted(frames)
+
+    if not compiled_json:
+        raise ValueError("No .json.gz files found in the specified folder.")
+
+    data = read_compressed_json(compiled_json)
+
+    # Iterate over each pixel in the compiled JSON data
+    for pixel, transitions in data.items():
+        # Initialize a binary array for the pixel
+        binary_state = {frame: 0 for frame in frames}  # Default to dark (0) for all frames
+
+        # Apply transitions to the binary state array
+        current_state = 0  # Start with dark (0)
+        for frame in frames:
+            # Check if there is a transition for the current frame
+            for transition in transitions:
+                frame_index = frame_number_from_img_name(transition["to_frame"])  # Find the index of the frame
+                if frame_index == frame:
+                    if transition["transition"] == "bright":
+                        current_state = 1  # Set to bright (1)
+                    elif transition["transition"] == "dark":
+                        current_state = 0  # Set to dark (0)
+
+            # Propagate the current state to the binary_state dictionary
+            binary_state[frame] = current_state
+
+        # Create a plot for the pixel
+        plt.figure(figsize=(10, 4))
+        plt.plot(
+            list(binary_state.keys()),  # X-axis: Frame numbers
+            list(binary_state.values()),  # Y-axis: Binary states
+            drawstyle="steps-post",
+            label=f"Pixel {pixel}",
+        )
+        plt.xlabel("Frame Number")
+        plt.ylabel("Binary State (0=Dark, 1=Bright)")
+        plt.title(f"Timing Plot for Pixel {pixel}")
+        plt.grid(True)
+        plt.legend()
+
+        # Save the plot to the output folder
+        plot_file = os.path.join(output_folder, f"pixel_{pixel}_timing_plot.png")
+        plt.savefig(plot_file)
+        plt.close()
+        write_compressed_json(binary_state, os.path.join(output_folder, f"pixel_{pixel}_timing_plot_data.json.gz"))
+        print(f"Saved timing plot for pixel {pixel} to {plot_file}")
+
+
+# Example usage:
+if __name__ == "__main__":
+    # 0051
+    # video_file_path = r"//snl/Collaborative/NSTTF_Optics/Projects/_Directories/NSTTF_Optics_LookbackExEx/Experiments/2025-06-14_NsttfHeliostatMoon/3_Post/DSC_0051/DSC_0051.MOV"  # Video Path Used to Generate Frames
+    # npz_folder = r"//snl/Collaborative/NSTTF_Optics/Projects/_Directories/NSTTF_Optics_LookbackExEx/Experiments/2025-06-14_NsttfHeliostatMoon/3_Post/DSC_0051/6_time_history_output/50"  # Replace with the path to your `.npz` file folder
+    # output_data_path = "//snl/Collaborative/NSTTF_Optics/Projects/_Directories/NSTTF_Optics_LookbackExEx/Experiments/2025-06-14_NsttfHeliostatMoon/3_Post/DSC_0051/7_pixel_timing_interrogation"  # Replace with the path to save the output
+    # output_data_name = "time_history_transition_parallel_facet.json"
+    # checkpoint_folder = "//snl/Collaborative/NSTTF_Optics/Projects/_Directories/NSTTF_Optics_LookbackExEx/Experiments/2025-06-14_NsttfHeliostatMoon/3_Post/DSC_0051/0_checkpoints"
+    # 2844
+    # video_file_path = r"//snl/Collaborative/NSTTF_Optics/Projects/_Directories/NSTTF_Optics_LookbackExEx/Experiments/2025-06-14_NsttfHeliostatMoon/3_Post/DSC_2844/DSC_2844.MOV"  # Video Path Used to Generate Frames
+    # npz_folder = r"//snl/Collaborative/NSTTF_Optics/Projects/_Directories/NSTTF_Optics_LookbackExEx/Experiments/2025-06-14_NsttfHeliostatMoon/3_Post/DSC_2844/6_time_history_output/50"  # Replace with the path to your `.npz` file folder
+    # output_data_path = "//snl/Collaborative/NSTTF_Optics/Projects/_Directories/NSTTF_Optics_LookbackExEx/Experiments/2025-06-14_NsttfHeliostatMoon/3_Post/DSC_2844/7_pixel_timing_interrogation"  # Replace with the path to save the output
+    # output_data_name = "time_history_transition_parallel_facet.json"
+    # checkpoint_folder = "//snl/Collaborative/NSTTF_Optics/Projects/_Directories/NSTTF_Optics_LookbackExEx/Experiments/2025-06-14_NsttfHeliostatMoon/3_Post/DSC_2844/0_checkpoints"
+    # 2832
+    video_file_path = r"//snl/Collaborative/NSTTF_Optics/Projects/_Directories/NSTTF_Optics_LookbackExEx/Experiments/2025-06-14_NsttfHeliostatMoon/3_Post/DSC_2832/DSC_2832.MOV"  # Video Path Used to Generate Frames
+    image_folder_path = r"//snl/Collaborative/NSTTF_Optics/Projects/_Directories/NSTTF_Optics_LookbackExEx/Experiments/2025-06-14_NsttfHeliostatMoon/3_Post/DSC_2832/3_specific_cropped_frames"  # Video Path Used to Generate Frames
+    json_folder = r"//snl/Collaborative/NSTTF_Optics/Projects/_Directories/NSTTF_Optics_LookbackExEx/Experiments/2025-06-14_NsttfHeliostatMoon/3_Post/DSC_2832/6_time_history_output/50"  # Replace with the path to your `.npz` file folder
+    output_data_path = "//snl/Collaborative/NSTTF_Optics/Projects/_Directories/NSTTF_Optics_LookbackExEx/Experiments/2025-06-14_NsttfHeliostatMoon/3_Post/DSC_2832/7_pixel_timing_interrogation"  # Replace with the path to save the output
+    output_data_name = "time_history_transition_parallel_facet.json.gz"
+    checkpoint_folder = "//snl/Collaborative/NSTTF_Optics/Projects/_Directories/NSTTF_Optics_LookbackExEx/Experiments/2025-06-14_NsttfHeliostatMoon/3_Post/DSC_2832/0_checkpoints"
+
+    # Assuming the original image has a shape of (1080, 1920) (height=1080, width=1920)
+    # height_range = (430, 680)
+    # width_range = (1130, 1360)
+    # height_range = (305, 525)
+    # width_range = (1040, 1270)
+    height_range = (100, 105)
+    width_range = (1100, 1105)
+    pixel_locations = [
+        (height, width)
+        for height in range(height_range[0], height_range[1])
+        for width in range(width_range[0], width_range[1])
+    ]
+    _ = interactive_image_plot(predefined_pixels=pixel_locations)
+    metadata = extract_video_metadata_exiftool(video_file_path)
+
+    checkpoint_file_name = (
+        f"time_history_transition_H{height_range[0]}_{height_range[1]}_W{width_range[0]}_{width_range[1]}.json"
+    )
+
+    analyze_pixel_brightness_parallel(
+        json_folder, pixel_locations, output_data_path, output_data_name, checkpoint_folder, checkpoint_file_name
+    )
+
+    # %% Plotting
+    create_timing_plots(
+        os.path.join(output_data_path, output_data_name),
+        os.path.join(output_data_path, "pixel_timing_plots"),
+        image_folder_path,
+    )

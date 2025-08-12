@@ -25,3 +25,6 @@ actual_output/
 
 # documentation generation
 doc/html/
+opencsp/de430t.bsp
+opencsp/app/lookback/de430.bsp
+*.bsp

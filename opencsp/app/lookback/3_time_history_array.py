@@ -127,7 +127,7 @@ def create_binary_pixel_array_parallel(
                 continue
 
             batch_data = []
-            with ProcessPoolExecutor() as executor:
+            with ProcessPoolExecutor(max_workers=3) as executor:
                 # Use tqdm to wrap the executor.map for progress tracking
                 for result in tqdm(
                     executor.map(process_image, batch_paths, [percentage] * len(batch_paths)),
@@ -239,7 +239,7 @@ def create_binary_pixel_array_parallel_with_overlap(
         # Process batches in parallel
         processed_batches = set(checkpoint_data["processed_batches"][percentage_key])
         futures = []
-        with ProcessPoolExecutor() as executor:
+        with ProcessPoolExecutor(max_workers=3) as executor:
             for batch_index, batch_paths in batches:
                 if batch_index in processed_batches:
                     print(f"Skipping already processed batch {batch_index} for threshold {percentage * 100}%.")
@@ -253,9 +253,9 @@ def create_binary_pixel_array_parallel_with_overlap(
                 batch_index = future.result()
                 processed_batches.add(batch_index)
 
-        # Update checkpoint after all batches are processed
-        checkpoint_data["processed_batches"][percentage_key] = list(processed_batches)
-        save_checkpoint(checkpoint_folder, checkpoint_file, checkpoint_data)
+                # Update checkpoint after all batches are processed
+                checkpoint_data["processed_batches"][percentage_key] = list(processed_batches)
+                save_checkpoint(checkpoint_folder, checkpoint_file, checkpoint_data)
 
         print(f"Finished processing for threshold {percentage * 100}%.")
 
@@ -263,9 +263,9 @@ def create_binary_pixel_array_parallel_with_overlap(
 if __name__ == "__main__":
     # Example usage:
     # Assuming you have a folder containing images, a percentage value, and an output file path
-    folder_path = r"//snl/Collaborative/NSTTF_Optics/Projects/_Directories/NSTTF_Optics_LookbackExEx/Experiments/2025-06-14_NsttfHeliostatMoon/3_Post/DSC_2832/3_specific_cropped_frames"
-    output_folder = r"//snl/Collaborative/NSTTF_Optics/Projects/_Directories/NSTTF_Optics_LookbackExEx/Experiments/2025-06-14_NsttfHeliostatMoon/3_Post/DSC_2832/6_time_history_output"  # File will be saved as a NumPy binary file
-    checkpoint_folder = "//snl/Collaborative/NSTTF_Optics/Projects/_Directories/NSTTF_Optics_LookbackExEx/Experiments/2025-06-14_NsttfHeliostatMoon/3_Post/DSC_2832/0_checkpoints"
+    folder_path = r"//snl/Collaborative/NSTTF_Optics/Projects/_Directories/NSTTF_Optics_LookbackExEx/Experiments/2025-06_05_NsttfTunedFacetScan1dof/3_Post/DSC_0025/3_specific_cropped_frames"
+    output_folder = r"//snl/Collaborative/NSTTF_Optics/Projects/_Directories/NSTTF_Optics_LookbackExEx/Experiments/2025-06_05_NsttfTunedFacetScan1dof/3_Post/DSC_0025/6_time_history_output"
+    checkpoint_folder = "//snl/Collaborative/NSTTF_Optics/Projects/_Directories/NSTTF_Optics_LookbackExEx/Experiments/2025-06_05_NsttfTunedFacetScan1dof/3_Post/DSC_0025/0_checkpoints"
     checkpoint_file_name = "time_history_array_checkpoint.json"
 
     percentage = [
@@ -291,7 +291,7 @@ if __name__ == "__main__":
         percentage,
         output_folder,
         checkpoint_folder=checkpoint_folder,
-        batch_size=1000,
+        batch_size=500,
         overlap=1,
         checkpoint_file=checkpoint_file_name,
     )

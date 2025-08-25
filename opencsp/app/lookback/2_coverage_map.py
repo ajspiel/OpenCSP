@@ -241,6 +241,8 @@ def construct_binary_maps_parallel(
         for batch_start in range(checkpoint_data["current_batch"], len(unprocessed_images), batch_size):
             batch_end = min(batch_start + batch_size, len(unprocessed_images))
             batch_files = unprocessed_images[batch_start:batch_end]
+            # Extract file names
+            file_names = [os.path.basename(file) for file in batch_files]
 
             process_images_in_batches(
                 batch_files,
@@ -253,7 +255,7 @@ def construct_binary_maps_parallel(
             )
 
             # Update checkpoint
-            checkpoint_data["processed_images"].extend(batch_files)
+            checkpoint_data["processed_images"].extend(file_names)
             checkpoint_data["current_batch"] = batch_start + batch_size
             checkpoint_data["prefix"] = "traditional"
             save_checkpoint(checkpoint_folder, checkpoint_file, checkpoint_data)
@@ -280,6 +282,8 @@ def construct_binary_maps_parallel(
         for batch_start in range(checkpoint_data["current_batch"], len(unprocessed_images_raw), batch_size):
             batch_end = min(batch_start + batch_size, len(unprocessed_images_raw))
             batch_files = unprocessed_images_raw[batch_start:batch_end]
+            # Extract file names
+            file_names = [os.path.basename(file) for file in batch_files]
 
             process_images_in_batches(
                 batch_files,
@@ -292,7 +296,7 @@ def construct_binary_maps_parallel(
             )
 
             # Update checkpoint
-            checkpoint_data["processed_images"].extend(batch_files)
+            checkpoint_data["processed_images"].extend(file_names)
             checkpoint_data["current_batch"] = batch_start + batch_size
             checkpoint_data["prefix"] = "raw"
             save_checkpoint(checkpoint_folder, checkpoint_file, checkpoint_data)
@@ -306,15 +310,15 @@ def construct_binary_maps_parallel(
 
 # Example usage
 if __name__ == "__main__":
-    checkpoint_folder = "//snl/Collaborative/NSTTF_Optics/Projects/_Directories/NSTTF_Optics_LookbackExEx/Experiments/2025-06-14_NsttfHeliostatMoon/3_Post/DSC_0036/0_checkpoints"
+    checkpoint_folder = "//snl/Collaborative/NSTTF_Optics/Projects/_Directories/NSTTF_Optics_LookbackExEx/Experiments/2025-06_05_NsttfTunedFacetScan1dof/3_Post/DSC_0025/0_checkpoints"
     checkpoint_file_name = "coverage_map_checkpoint.json"
-    image_folder = "//snl/Collaborative/NSTTF_Optics/Projects/_Directories/NSTTF_Optics_LookbackExEx/Experiments/2025-06-14_NsttfHeliostatMoon/3_Post/DSC_0036/3_specific_cropped_frames"  # Replace with the path to your image folder
-    output_folder = "//snl/Collaborative/NSTTF_Optics/Projects/_Directories/NSTTF_Optics_LookbackExEx/Experiments/2025-06-14_NsttfHeliostatMoon/3_Post/DSC_0036/4_coverage_map"
+    image_folder = "//snl/Collaborative/NSTTF_Optics/Projects/_Directories/NSTTF_Optics_LookbackExEx/Experiments/2025-06_05_NsttfTunedFacetScan1dof/3_Post/DSC_0025/3_specific_cropped_frames"  # Replace with the path to your image folder
+    output_folder = "//snl/Collaborative/NSTTF_Optics/Projects/_Directories/NSTTF_Optics_LookbackExEx/Experiments/2025-06_05_NsttfTunedFacetScan1dof/3_Post/DSC_0025/4_coverage_map"
     # image_folder = r"//snl/Collaborative/NSTTF_Optics/Projects/_Directories/NSTTF_Optics_LookbackExEx/Experiments/2025-06_05_NsttfTunedFacetScan1dof/3_Post/Nikon_CSOL_1_DSC2687_2826/1_video_frames"  # Replace with the path to your image folder
     # output_folder = r"//snl/Collaborative/NSTTF_Optics/Projects/_Directories/NSTTF_Optics_LookbackExEx/Experiments/2025-06_05_NsttfTunedFacetScan1dof/3_Post/Nikon_CSOL_1_DSC2687_2826/4_coverage_map"
 
     threshold_fractions = [0.01, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99]
-    batch_size = 1000  # Process 1000 images per batch
+    batch_size = 500  # Process 1000 images per batch
 
     construct_binary_maps_parallel(
         image_folder,

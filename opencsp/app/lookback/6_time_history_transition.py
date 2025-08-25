@@ -10,11 +10,11 @@ import os
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.widgets import RectangleSelector
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 from tqdm import tqdm
 
 
-def save_checkpoint(checkpoint_folder, checkpoint_file_name, checkpoint_data):
+def save_checkpoint(checkpoint_folder, checkpoint_file_name, checkpoint_data, print_path=True):
     """
     Saves the checkpoint data to a JSON file.
 
@@ -27,7 +27,8 @@ def save_checkpoint(checkpoint_folder, checkpoint_file_name, checkpoint_data):
     """
     with open(os.path.join(checkpoint_folder, checkpoint_file_name), 'w') as f:
         json.dump(checkpoint_data, f, indent=4)
-    print(f"Checkpoint saved to {os.path.join(checkpoint_folder, checkpoint_file_name)}")
+    if print_path:
+        print(f"Checkpoint saved to {os.path.join(checkpoint_folder, checkpoint_file_name)}")
 
 
 def load_checkpoint(checkpoint_folder, checkpoint_file_name):
@@ -198,6 +199,10 @@ def analyze_pixel_brightness_parallel(
     Returns:
         None
     """
+    # Check if the final output file already exists
+    if os.path.exists(os.path.join(output_folder, final_output_file)):
+        print(f"Final output file '{final_output_file}' already exists. Skipping analysis to avoid rework.")
+        return
     # Ensure the output folder exists
     os.makedirs(output_folder, exist_ok=True)
 
@@ -482,6 +487,132 @@ def create_timing_plots(compiled_json, output_folder, source_image_folder):
         print(f"Saved timing plot for pixel {pixel} to {plot_file}")
 
 
+def create_timing_plots_with_pillow(
+    compiled_json, output_folder, source_image_folder, checkpoint_folder, checkpoint_file="timing_plots_checkpoint.json"
+):
+    """
+    Create timing plots for each pixel using Pillow and update a checkpoint file.
+
+    Parameters:
+        compiled_json (str): Path to the compiled JSON file.
+        output_folder (str): Folder to save the timing plots.
+        source_image_folder (str): Folder containing source images.
+        checkpoint_folder (str): Folder to save the checkpoint file.
+        checkpoint_file (str): Name of the checkpoint file.
+
+    Returns:
+        None
+    """
+    # Ensure the output folder exists
+    os.makedirs(output_folder, exist_ok=True)
+    os.makedirs(checkpoint_folder, exist_ok=True)
+
+    # Load checkpoint if it exists
+    checkpoint_data = load_checkpoint(checkpoint_folder, checkpoint_file)
+    if checkpoint_data is None:
+        checkpoint_data = {"processed_pixels": []}
+
+    # Get all .png files in the folder, sorted by batch order
+    image_files = sorted(
+        [os.path.join(source_image_folder, f) for f in os.listdir(source_image_folder) if f.lower().endswith(".png")]
+    )
+    if not image_files:
+        raise ValueError("No source image files (.png) found in the specified folder.")
+
+    frames = []
+    for item in image_files:
+        frames.append(frame_number_from_img_name(item))
+    frames = sorted(frames)
+
+    if not compiled_json:
+        raise ValueError("No .json.gz files found in the specified folder.")
+
+    data = read_compressed_json(compiled_json)
+    # Create a tqdm progress bar outside the loop
+    progress_bar = tqdm(total=len(data), desc="Creating Timing Plots and Writing Data")
+
+    # Iterate over each pixel in the compiled JSON data
+    for pixel, transitions in data.items():
+        if pixel in checkpoint_data["processed_pixels"]:
+            print(f"Skipping already processed pixel {pixel}.")
+            progress_bar.update(1)  # Update the progress bar even if skipping
+            continue
+
+        # Initialize a binary array for the pixel
+        binary_state = {frame: 0 for frame in frames}  # Default to dark (0) for all frames
+
+        # Apply transitions to the binary state array
+        current_state = 0  # Start with dark (0)
+        for frame in frames:
+            # Check if there is a transition for the current frame
+            for transition in transitions:
+                frame_index = frame_number_from_img_name(transition["to_frame"])  # Find the index of the frame
+                if frame_index == frame:
+                    if transition["transition"] == "bright":
+                        current_state = 1  # Set to bright (1)
+                    elif transition["transition"] == "dark":
+                        current_state = 0  # Set to dark (0)
+
+            # Propagate the current state to the binary_state dictionary
+            binary_state[frame] = current_state
+
+        # Create a plot for the pixel using Pillow
+        width, height = 1000, 400
+        margin = 50
+        img = Image.new("RGB", (width, height), "white")
+        draw = ImageDraw.Draw(img)
+
+        # Draw axes
+        draw.line([(margin, height - margin), (width - margin, height - margin)], fill="black", width=2)  # X-axis
+        draw.line([(margin, margin), (margin, height - margin)], fill="black", width=2)  # Y-axis
+
+        # Draw grid lines
+        num_grid_lines = 10
+        x_grid_spacing = (width - 2 * margin) / num_grid_lines
+        y_grid_spacing = (height - 2 * margin) / 2  # Binary states are 0 or 1
+        for i in range(num_grid_lines + 1):
+            x = margin + i * x_grid_spacing
+            draw.line([(x, margin), (x, height - margin)], fill="lightgray", width=1)  # Vertical grid lines
+        for i in range(3):  # Binary states are 0, 1 (and optionally 2 for future use)
+            y = height - margin - i * y_grid_spacing
+            draw.line([(margin, y), (width - margin, y)], fill="lightgray", width=1)  # Horizontal grid lines
+
+        # Draw binary state plot
+        x_scale = (width - 2 * margin) / len(frames)
+        y_scale = (height - 2 * margin) / 2  # Binary states are 0 or 1
+        prev_x, prev_y = margin, height - margin - binary_state[frames[0]] * y_scale
+        for i, frame in enumerate(frames):
+            x = margin + i * x_scale
+            y = height - margin - binary_state[frame] * y_scale
+            draw.line([(prev_x, prev_y), (x, prev_y)], fill="blue", width=2)  # Horizontal line
+            draw.line([(x, prev_y), (x, y)], fill="blue", width=2)  # Vertical line
+            prev_x, prev_y = x, y
+
+        # Add periodic frame number labels on the x-axis
+        font = ImageFont.load_default()
+        label_interval = max(1, len(frames) // num_grid_lines)  # Determine label interval
+        for i, frame in enumerate(frames):
+            if i % label_interval == 0:  # Add label at regular intervals
+                x = margin + i * x_scale
+                draw.text((x - 10, height - margin + 5), str(frame), fill="black", font=font)
+
+        # Add labels and title
+        draw.text((width // 2 - margin, margin // 2), f"Timing Plot for Pixel {pixel}", fill="black", font=font)
+        draw.text((width // 2 - margin, height - margin + 20), "Frame Number", fill="black", font=font)
+
+        # Save the plot to the output folder
+        plot_file = os.path.join(output_folder, f"pixel_{pixel}_timing_plot_PIL.jpg")
+        img.save(plot_file)
+        write_compressed_json(binary_state, os.path.join(output_folder, f"pixel_{pixel}_timing_plot_data.json.gz"))
+
+        # Update checkpoint
+        checkpoint_data["processed_pixels"].append(pixel)
+        save_checkpoint(checkpoint_folder, checkpoint_file, checkpoint_data, print_path=False)
+        # Update the progress bar
+        progress_bar.update(1)
+    progress_bar.close()
+
+
 # Example usage:
 if __name__ == "__main__":
     # 0051
@@ -497,26 +628,33 @@ if __name__ == "__main__":
     # output_data_name = "time_history_transition_parallel_facet.json"
     # checkpoint_folder = "//snl/Collaborative/NSTTF_Optics/Projects/_Directories/NSTTF_Optics_LookbackExEx/Experiments/2025-06-14_NsttfHeliostatMoon/3_Post/DSC_2844/0_checkpoints"
     # 2832
-    video_file_path = r"//snl/Collaborative/NSTTF_Optics/Projects/_Directories/NSTTF_Optics_LookbackExEx/Experiments/2025-06-14_NsttfHeliostatMoon/3_Post/DSC_2832/DSC_2832.MOV"  # Video Path Used to Generate Frames
-    image_folder_path = r"//snl/Collaborative/NSTTF_Optics/Projects/_Directories/NSTTF_Optics_LookbackExEx/Experiments/2025-06-14_NsttfHeliostatMoon/3_Post/DSC_2832/3_specific_cropped_frames"  # Video Path Used to Generate Frames
-    json_folder = r"//snl/Collaborative/NSTTF_Optics/Projects/_Directories/NSTTF_Optics_LookbackExEx/Experiments/2025-06-14_NsttfHeliostatMoon/3_Post/DSC_2832/6_time_history_output/50"  # Replace with the path to your `.npz` file folder
-    output_data_path = "//snl/Collaborative/NSTTF_Optics/Projects/_Directories/NSTTF_Optics_LookbackExEx/Experiments/2025-06-14_NsttfHeliostatMoon/3_Post/DSC_2832/7_pixel_timing_interrogation"  # Replace with the path to save the output
+    # video_file_path = r"//snl/Collaborative/NSTTF_Optics/Projects/_Directories/NSTTF_Optics_LookbackExEx/Experiments/2025-06-14_NsttfHeliostatMoon/3_Post/DSC_2832/DSC_2832.MOV"  # Video Path Used to Generate Frames
+    # image_folder_path = r"//snl/Collaborative/NSTTF_Optics/Projects/_Directories/NSTTF_Optics_LookbackExEx/Experiments/2025-06-14_NsttfHeliostatMoon/3_Post/DSC_2832/3_specific_cropped_frames"  # Video Path Used to Generate Frames
+    # json_folder = r"//snl/Collaborative/NSTTF_Optics/Projects/_Directories/NSTTF_Optics_LookbackExEx/Experiments/2025-06-14_NsttfHeliostatMoon/3_Post/DSC_2832/6_time_history_output/50"  # Replace with the path to your `.npz` file folder
+    # output_data_path = "//snl/Collaborative/NSTTF_Optics/Projects/_Directories/NSTTF_Optics_LookbackExEx/Experiments/2025-06-14_NsttfHeliostatMoon/3_Post/DSC_2832/7_pixel_timing_interrogation"  # Replace with the path to save the output
+    # output_data_name = "time_history_transition_parallel_facet.json.gz"
+    # checkpoint_folder = "//snl/Collaborative/NSTTF_Optics/Projects/_Directories/NSTTF_Optics_LookbackExEx/Experiments/2025-06-14_NsttfHeliostatMoon/3_Post/DSC_2832/0_checkpoints"
+    # 0025 Sun Data
+    video_file_path = r"//snl/Collaborative/NSTTF_Optics/Projects/_Directories/NSTTF_Optics_LookbackExEx/Experiments/2025-06_05_NsttfTunedFacetScan1dof/3_Post/DSC_0025/DSC_0025.MOV"  # Video Path Used to Generate Frames
+    image_folder_path = r"//snl/Collaborative/NSTTF_Optics/Projects/_Directories/NSTTF_Optics_LookbackExEx/Experiments/2025-06_05_NsttfTunedFacetScan1dof/3_Post/DSC_0025/3_specific_cropped_frames"  # Video Path Used to Generate Frames
+    json_folder = r"//snl/Collaborative/NSTTF_Optics/Projects/_Directories/NSTTF_Optics_LookbackExEx/Experiments/2025-06_05_NsttfTunedFacetScan1dof/3_Post/DSC_0025/6_time_history_output/50"  # Replace with the path to your `.npz` file folder
+    output_data_path = "//snl/Collaborative/NSTTF_Optics/Projects/_Directories/NSTTF_Optics_LookbackExEx/Experiments/2025-06_05_NsttfTunedFacetScan1dof/3_Post/DSC_0025/7_pixel_timing_interrogation"  # Replace with the path to save the output
     output_data_name = "time_history_transition_parallel_facet.json.gz"
-    checkpoint_folder = "//snl/Collaborative/NSTTF_Optics/Projects/_Directories/NSTTF_Optics_LookbackExEx/Experiments/2025-06-14_NsttfHeliostatMoon/3_Post/DSC_2832/0_checkpoints"
+    checkpoint_folder = "//snl/Collaborative/NSTTF_Optics/Projects/_Directories/NSTTF_Optics_LookbackExEx/Experiments/2025-06_05_NsttfTunedFacetScan1dof/3_Post/DSC_0025/0_checkpoints"
 
     # Assuming the original image has a shape of (1080, 1920) (height=1080, width=1920)
     # height_range = (430, 680)
     # width_range = (1130, 1360)
     # height_range = (305, 525)
     # width_range = (1040, 1270)
-    height_range = (100, 105)
-    width_range = (1100, 1105)
+    height_range = (435, 670)
+    width_range = (830, 1070)
     pixel_locations = [
         (height, width)
         for height in range(height_range[0], height_range[1])
         for width in range(width_range[0], width_range[1])
     ]
-    _ = interactive_image_plot(predefined_pixels=pixel_locations)
+    # _ = interactive_image_plot(predefined_pixels=pixel_locations)
     metadata = extract_video_metadata_exiftool(video_file_path)
 
     checkpoint_file_name = (
@@ -528,8 +666,16 @@ if __name__ == "__main__":
     )
 
     # %% Plotting
+    '''
     create_timing_plots(
         os.path.join(output_data_path, output_data_name),
         os.path.join(output_data_path, "pixel_timing_plots"),
         image_folder_path,
+    )
+    '''
+    create_timing_plots_with_pillow(
+        compiled_json=os.path.join(output_data_path, output_data_name),
+        output_folder=os.path.join(output_data_path, "pixel_timing_plots_PIL"),
+        source_image_folder=image_folder_path,
+        checkpoint_folder=checkpoint_folder,
     )

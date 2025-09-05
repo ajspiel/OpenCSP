@@ -5,7 +5,7 @@ from typing import Callable
 import cv2 as cv
 import numpy as np
 
-from contrib.common.lib.cv.spot_analysis.PixelLocation import PixelOfInterest
+from contrib.common.lib.cv.spot_analysis.PixelOfInterest import PixelOfInterest
 from opencsp.common.lib.cv.CacheableImage import CacheableImage
 import opencsp.common.lib.geometry.Pxy as p2
 import opencsp.common.lib.render.Color as color

@@ -5,7 +5,8 @@ import gzip
 import time
 import subprocess
 from multiprocessing import Pool, Manager
-import logging
+from opencsp.common.lib.tool.log_tools import multiprocessing_logger
+from logging import DEBUG, ERROR
 
 # import warnings
 from zoneinfo import ZoneInfo
@@ -21,8 +22,11 @@ import matplotlib.pyplot as plt
 
 # Specify the folder where the log file should be saved
 log_folder = "//snl/Collaborative/NSTTF_Optics/Projects/_Directories/NSTTF_Optics_LookbackExEx/Experiments/2025-06_05_NsttfTunedFacetScan1dof/3_Post/DSC_0025/0_checkpoints/error_logs"  # Replace with your desired folder path
-log_file = os.path.join(log_folder, "error_log.txt")
+log_file = os.path.join(log_folder, "error_log_celestial_vectors_debug.txt")
 
+logger = multiprocessing_logger(log_dir_body_ext=log_file, level=ERROR)
+
+'''
 # Ensure the folder exists
 os.makedirs(log_folder, exist_ok=True)
 
@@ -30,7 +34,7 @@ os.makedirs(log_folder, exist_ok=True)
 logger = logging.getLogger(__name__)
 
 # Set the logging level
-logger.setLevel(logging.ERROR)
+logger.setLevel(logging.DEBUG)
 
 # Create a file handler
 file_handler = logging.FileHandler(log_file)
@@ -44,6 +48,7 @@ file_handler.setFormatter(formatter)
 
 # Add the file handler to the logger
 logger.addHandler(file_handler)
+'''
 
 
 def save_checkpoint(checkpoint_folder, checkpoint_file_name, checkpoint_data, print_path=True):
@@ -524,7 +529,7 @@ def calculate_vectors_celestial_observer(celestial_object_name, target_location,
     if celestial_object_name.lower() == 'moon':
         radius_of_celestial_object = 1737.4  # Radius in kilometers of the Moon
     elif celestial_object_name.lower() == 'sun':
-        radius_of_celestial_object = 696340  # Radius in kilometers of the Sun
+        radius_of_celestial_object = 1391400 / 2  # Radius in kilometers of the Sun
     else:
         radius_of_celestial_object = 1737.4  # Radius in kilometers of the Moon
 
@@ -603,7 +608,7 @@ def extract_pixel_timing_and_celestial_vectors(
                     frame_range_all.append(tuple((1, frame_number_from_img_name(transition['to_frame']))))
                 elif transition["transition"] == "dark":
                     frame_range_all.append(tuple((0, frame_number_from_img_name(transition['to_frame']))))
-            frame_range, frame_diff = maximum_frame_range(frame_range=frame_range_all)
+            frame_range, frame_diff = maximum_frame_range(frame_ranges=frame_range_all)
 
         elapsed_time_bright = frame_diff / video_metadata['frame_rate']
         elapsed_time_start = frame_range[0][1] / video_metadata['frame_rate']
@@ -707,7 +712,7 @@ def process_pixel(args):
                 frame_range_all.append(tuple((1, frame_number_from_img_name(transition['to_frame']))))
             elif transition["transition"] == "dark":
                 frame_range_all.append(tuple((0, frame_number_from_img_name(transition['to_frame']))))
-        frame_range, frame_diff = maximum_frame_range(frame_range=frame_range_all)
+        frame_range, frame_diff = maximum_frame_range(frame_ranges=frame_range_all)
 
     elapsed_time_bright = frame_diff / video_metadata['frame_rate']
     elapsed_time_start = frame_range[0][1] / video_metadata['frame_rate']
@@ -732,18 +737,6 @@ def process_pixel(args):
     )
     points = np.array([[0, 0, 0], start_vector['cel_to_target_cartesian'], end_vector['cel_to_target_cartesian']])
     radii = np.array([1, start_vector['angular_size_radians'] / 2, end_vector['angular_size_radians'] / 2])
-    try:
-        intersection_1, intersection_2 = trilaterate(points, radii, raise_on_no_solution=True)
-    except ValueError:
-        logger.debug("process_pixel Error pixel %s", pixel, exc_info=True)
-        checkpoint_data["processed_pixels"].append(pixel)
-        checkpoint_data["pixels_without_data"].append(pixel)
-        # save_checkpoint(checkpoint_folder, checkpoint_file, checkpoint_data, print_path=False)
-        return pixel, None, checkpoint_data
-
-    observer_vec, slope_1, slope_2 = calculate_slope(
-        start_vector['target_to_observer'], end_vector['target_to_observer'], intersection_1, intersection_2
-    )
 
     pixel_data = {
         "start_time_Local": obsv_time_utc_start.astimezone(abq_tz),
@@ -752,16 +745,67 @@ def process_pixel(args):
         "end_time_Local": obsv_time_utc_end.astimezone(abq_tz),
         "end_time_UTC": obsv_time_utc_end.utc_datetime(),
         "end_vector": end_vector,
-        "intersection_1": intersection_1,
-        "intersection_2": intersection_2,
-        "slope_1": slope_1,
-        "slope_2": slope_2,
-        "observer_vector": observer_vec,
+        "intersection_1": [],
+        "intersection_2": [],
+        "slope_1": [],
+        "slope_2": [],
+        "observer_vector": (start_vector['target_to_observer'] + end_vector['target_to_observer']) / 2,
     }
 
-    checkpoint_data["processed_pixels"].append(pixel)
-    checkpoint_data["pixels_with_data"].append(pixel)
-    # save_checkpoint(checkpoint_folder, checkpoint_file, checkpoint_data, print_path=False)
+    try:
+        intersection_1, intersection_2 = trilaterate(points, radii, raise_on_no_solution=False)
+
+        observer_vec, slope_1, slope_2 = safe_calculate_slope(
+            start_vector['target_to_observer'], end_vector['target_to_observer'], intersection_1, intersection_2
+        )
+
+        pixel_data = {
+            "start_time_Local": obsv_time_utc_start.astimezone(abq_tz),
+            "start_time_UTC": obsv_time_utc_start.utc_datetime(),
+            "start_vector": start_vector,
+            "end_time_Local": obsv_time_utc_end.astimezone(abq_tz),
+            "end_time_UTC": obsv_time_utc_end.utc_datetime(),
+            "end_vector": end_vector,
+            "intersection_1": intersection_1,
+            "intersection_2": intersection_2,
+            "slope_1": slope_1,
+            "slope_2": slope_2,
+            "observer_vector": observer_vec,
+        }
+
+        checkpoint_data["processed_pixels"].append(pixel)
+        checkpoint_data["pixels_with_data"].append(pixel)
+        # save_checkpoint(checkpoint_folder, checkpoint_file, checkpoint_data, print_path=False)
+    # except ValueError:
+    except Exception:
+        logger.debug("process_pixel Error pixel %s", pixel, exc_info=True)
+
+        try:
+            observer_vec, slope_1, slope_2 = safe_calculate_slope(
+                start_vector['target_to_observer'], end_vector['target_to_observer'], intersection_1, intersection_2
+            )
+
+            pixel_data = {
+                "start_time_Local": obsv_time_utc_start.astimezone(abq_tz),
+                "start_time_UTC": obsv_time_utc_start.utc_datetime(),
+                "start_vector": start_vector,
+                "end_time_Local": obsv_time_utc_end.astimezone(abq_tz),
+                "end_time_UTC": obsv_time_utc_end.utc_datetime(),
+                "end_vector": end_vector,
+                "intersection_1": intersection_1,
+                "intersection_2": intersection_2,
+                "slope_1": slope_1,
+                "slope_2": slope_2,
+                "observer_vector": observer_vec,
+            }
+            checkpoint_data["processed_pixels"].append(pixel)
+            checkpoint_data["pixels_with_data"].append(pixel)
+        except Exception:
+            logger.debug("process_pixel Error pixel %s", pixel, exc_info=True)
+            checkpoint_data["processed_pixels"].append(pixel)
+            checkpoint_data["pixels_without_data"].append(pixel)
+            # save_checkpoint(checkpoint_folder, checkpoint_file, checkpoint_data, print_path=False)
+            return pixel, pixel_data, checkpoint_data
 
     return pixel, pixel_data, checkpoint_data
 
@@ -777,8 +821,12 @@ def extract_pixel_timing_and_celestial_vectors_parallel(
     output_json_name,
     checkpoint_folder,
     checkpoint_file,
-    batch_size=500,  # Number of pixels to process in each batch
+    batch_size=5000,  # Number of pixels to process in each batch
 ):
+    if os.path.exists(os.path.join(output_folder_vector, output_json_name)):
+        logger.info("Compiled output file already exists, skipping code block")
+        return
+
     video_start_time = datetime.strptime(video_metadata['creation_date'], "%Y:%m:%d %H:%M:%S")
     abq_tz = ZoneInfo("America/Denver")
     video_start_time = video_start_time.replace(tzinfo=abq_tz)
@@ -825,6 +873,7 @@ def extract_pixel_timing_and_celestial_vectors_parallel(
                 for pixel, transitions in filtered_batch_data
             ]
 
+            # with Pool(processes=1) as pool:  # Maybe look into hyperthreading
             with Pool(processes=os.cpu_count()) as pool:  # Use all available CPU cores
                 results = list(
                     tqdm(
@@ -877,6 +926,28 @@ def calculate_slope(observer_vec_start, observer_vec_end, inter_1, inter_2):
     slope_1 = (observer_vec + inter_1) / np.linalg.norm(observer_vec + inter_1)
     slope_2 = (observer_vec + inter_2) / np.linalg.norm(observer_vec + inter_2)
     return observer_vec, slope_1, slope_2
+
+
+def safe_calculate_slope(start_vector, end_vector, intersection_1, intersection_2):
+    """
+    Wrapper for calculate_slope with error handling and logging.
+    """
+    try:
+        # Call the calculate_slope function
+        observer_vec, slope_1, slope_2 = calculate_slope(start_vector, end_vector, intersection_1, intersection_2)
+        return observer_vec, slope_1, slope_2
+    except KeyError as e:
+        # Handle missing keys in dictionaries
+        logger.debug("KeyError in calculate_slope: %s", e, exc_info=True)
+        return None, None, None
+    except TypeError as e:
+        # Handle type-related issues (e.g., NoneType or invalid types)
+        logger.debug("TypeError in calculate_slope: %s", e, exc_info=True)
+        return None, None, None
+    except Exception as e:
+        # Catch any other unexpected errors
+        logger.debug("Unexpected error in calculate_slope: %s", e, exc_info=True)
+        return None, None, None
 
 
 def plotting_pixel_transition_vectors(pixel, vector_dict, celestial_object, output_folder):
@@ -1065,6 +1136,9 @@ def plotting_pixel_transition_vectors_decoupled(
     progress_bar = tqdm(total=len(data), desc="Creating 3D Pixel Vector Plots")
 
     for pixel, _ in data.items():
+        # Save the plot to the output folder
+        height, _ = eval(pixel)
+        plot_file = os.path.normpath(os.path.join(output_folder_img, str(height), f"pixel_{pixel}_sky_plot_slope.png"))
         if pixel in checkpoint_data["pixels_without_data"]:
             logger.info("Skipping 3D plot for pixel %s without data.", pixel)
             # print(f"Skipping pixel {pixel} without data.")
@@ -1073,6 +1147,11 @@ def plotting_pixel_transition_vectors_decoupled(
 
         if isinstance(data[pixel], list):
             logger.info("Pixel %s incorrectly saved as having data", pixel)
+            progress_bar.update(1)
+            continue
+
+        if os.path.exists(plot_file):
+            logger.info("Pixel %s 3D plot already exists, skipping", pixel)
             progress_bar.update(1)
             continue
 
@@ -1109,6 +1188,19 @@ def plotting_pixel_transition_vectors_decoupled(
         ins_x_lim = []
         ins_y_lim = []
         ins_z_lim = []
+
+        # Calculate azimuthal angle (azim)
+        azim = np.degrees(np.arctan2(slope_1[1], slope_1[0]))
+
+        # Calculate elevation angle (elev)
+        # Handle the case where x and y are both zero to avoid division by zero
+        if slope_1[0] == 0 and slope_1[1] == 0:
+            elev = 90 if slope_1[2] > 0 else -90  # Directly overhead or underneath
+        else:
+            elev = np.degrees(np.arctan2(slope_1[2], np.sqrt(slope_1[0] ** 2 + slope_1[1] ** 2)))
+
+        inset_ax.view_init(elev=elev, azim=azim)
+
         # Plot the projections for each interpolated time
         for i, vector in enumerate([start_vector, end_vector]):
 
@@ -1238,12 +1330,260 @@ def plotting_pixel_transition_vectors_decoupled(
         inset_ax.set_ylabel("Y")
         inset_ax.set_zlabel("Z")
         # Save the plot to the output folder
-        plot_file = os.path.normpath(os.path.join(output_folder_img, f"pixel_{pixel}_sky_plot_slope.png"))
-        plt.savefig(plot_file)
-        plt.close()
+        height, _ = eval(pixel)
+        if os.path.isdir(os.path.join(output_folder_img, str(height))):
+            plt.savefig(plot_file)
+            plt.close()
+        else:
+            os.makedirs(os.path.join(output_folder_img, str(height)), exist_ok=True)
+            plt.savefig(plot_file)
+            plt.close()
         checkpoint_plots["plotted_pixels"].append(pixel)
         save_checkpoint(checkpoint_folder, checkpoint_plot_file, checkpoint_plots)
         progress_bar.update(1)
+    progress_bar.close()
+
+
+def plot_pixel_batch(batch_pixels, data, checkpoint_data, output_folder_img, celestial_object):
+    """
+    Process a batch of pixels and return the list of successfully plotted pixels.
+    """
+    plotted_pixels = []
+
+    for pixel in batch_pixels:
+        height, _ = eval(pixel)
+        plot_file = os.path.normpath(os.path.join(output_folder_img, str(height), f"pixel_{pixel}_sky_plot_slope.png"))
+
+        if pixel in checkpoint_data["pixels_without_data"]:
+            logger.info("Skipping 3D plot for pixel %s without data.", pixel)
+            continue
+
+        if isinstance(data[pixel], list):
+            logger.info("Pixel %s incorrectly saved as having data", pixel)
+            continue
+
+        if os.path.exists(plot_file):
+            logger.info("Pixel %s 3D plot already exists, skipping", pixel)
+            continue
+
+        start_vector = data[pixel]['start_vector']
+        end_vector = data[pixel]['end_vector']
+        local_time_start = data[pixel]['start_time_Local']
+        local_time_end = data[pixel]['end_time_Local']
+        inter_1 = data[pixel]['intersection_1']
+        inter_2 = data[pixel]['intersection_2']
+        slope_1 = data[pixel]['slope_1']
+        slope_2 = data[pixel]['slope_2']
+        observer_vec = data[pixel]['observer_vector']
+
+        # Create the Positive Zenith side of the south half of a unit sphere for visualization of the horizon
+        u = np.linspace(np.pi, 2 * np.pi, 100)
+        v = np.linspace(0, np.pi / 2, 100)
+        x = np.outer(np.cos(u), np.sin(v))
+        y = np.outer(np.sin(u), np.sin(v))
+        z = np.outer(np.ones(np.size(u)), np.cos(v))
+
+        # Initialize 3D plot
+        fig = plt.figure(figsize=(12, 10))
+        ax = fig.add_subplot(111, projection='3d')
+
+        # Plot the unit sphere
+        ax.plot_surface(x, y, z, color='lightblue', alpha=0.15)
+
+        # Initialize inset 3D plot
+        inset_ax = fig.add_axes([0.02, 0.05, 0.3, 0.3], projection='3d')
+
+        # Plot the unit sphere on the inset plot
+        inset_ax.plot_surface(x, y, z, color='lightblue', alpha=0.15)
+
+        ins_x_lim = []
+        ins_y_lim = []
+        ins_z_lim = []
+
+        # Calculate azimuthal angle (azim)
+        azim = np.degrees(np.arctan2(slope_1[1], slope_1[0]))
+
+        # Calculate elevation angle (elev)
+        if slope_1[0] == 0 and slope_1[1] == 0:
+            elev = 90 if slope_1[2] > 0 else -90
+        else:
+            elev = np.degrees(np.arctan2(slope_1[2], np.sqrt(slope_1[0] ** 2 + slope_1[1] ** 2)))
+
+        inset_ax.view_init(elev=elev, azim=azim)
+
+        # Plot the projections for each interpolated time
+        for i, vector in enumerate([start_vector, end_vector]):
+            angular_radius = vector['angular_size_radians'] / 2
+            num_points = 360
+            theta = np.linspace(0, 2 * np.pi, num_points)
+
+            arbitrary_vector = (
+                np.array([1, 0, 0])
+                if not np.allclose(vector['cel_to_target_cartesian'], [1, 0, 0])
+                else np.array([0, 1, 0])
+            )
+            basis1 = np.cross(vector['cel_to_target_cartesian'], arbitrary_vector)
+            basis1 /= np.linalg.norm(basis1)
+
+            basis2 = np.cross(vector['cel_to_target_cartesian'], basis1)
+            basis2 /= np.linalg.norm(basis2)
+
+            circle_points = []
+            for angle in theta:
+                point = np.cos(angular_radius) * vector['cel_to_target_cartesian'] + np.sin(angular_radius) * (
+                    np.cos(angle) * basis1 + np.sin(angle) * basis2
+                )
+                circle_points.append(point)
+            circle_points = np.array(circle_points)
+
+            ins_x_lim.append([np.min(circle_points[:, 0]), np.max(circle_points[:, 0])])
+            ins_y_lim.append([np.min(circle_points[:, 1]), np.max(circle_points[:, 1])])
+            ins_z_lim.append([np.min(circle_points[:, 2]), np.max(circle_points[:, 2])])
+
+            ax.plot(circle_points[:, 0], circle_points[:, 1], circle_points[:, 2], color='green' if i == 0 else 'red')
+            inset_ax.plot(
+                circle_points[:, 0], circle_points[:, 1], circle_points[:, 2], color='green' if i == 0 else 'red'
+            )
+
+            if i == 0:
+                ax.quiver(
+                    0,
+                    0,
+                    0,
+                    vector['cel_to_target_cartesian'][0],
+                    vector['cel_to_target_cartesian'][1],
+                    vector['cel_to_target_cartesian'][2],
+                    color='green',
+                    label=f"Start Time Local: {local_time_start}",
+                    arrow_length_ratio=0.1,
+                )
+                ax.quiver(
+                    0,
+                    0,
+                    0,
+                    observer_vec[0],
+                    observer_vec[1],
+                    observer_vec[2],
+                    color='black',
+                    label="Observer to Target",
+                    arrow_length_ratio=0.1,
+                )
+                ax.quiver(
+                    0,
+                    0,
+                    0,
+                    slope_1[0],
+                    slope_1[1],
+                    slope_1[2],
+                    color='royalblue',
+                    label="Slope Option 1",
+                    arrow_length_ratio=0.1,
+                )
+                inset_ax.scatter(inter_1[0], inter_1[1], inter_1[2], c='royalblue', label="Intersection 1")
+            else:
+                ax.quiver(
+                    0,
+                    0,
+                    0,
+                    vector['cel_to_target_cartesian'][0],
+                    vector['cel_to_target_cartesian'][1],
+                    vector['cel_to_target_cartesian'][2],
+                    color='red',
+                    label=f"End Time Local: {local_time_end}",
+                    arrow_length_ratio=0.1,
+                )
+                ax.quiver(
+                    0,
+                    0,
+                    0,
+                    slope_2[0],
+                    slope_2[1],
+                    slope_2[2],
+                    color='darkorange',
+                    label="Slope Option 2",
+                    arrow_length_ratio=0.1,
+                )
+                inset_ax.scatter(inter_2[0], inter_2[1], inter_2[2], c='darkorange', label="Intersection 2")
+
+        ax.set_xlim([-1, 1])
+        ax.set_ylim([-1, 0])
+        ax.set_zlim([0, 1])
+        ax.set_xlabel('X - East is Positive')
+        ax.set_ylabel('Y - North is Positive')
+        ax.set_zlabel('Z - Zenith is Positive')
+        ax.set_title(f'Mixel {pixel} Bright to Dark on Unit Sphere with {celestial_object.capitalize()}')
+        ax.set_aspect('equal')
+        ax.legend(loc='lower center')
+
+        inset_ax.set_xlim([np.min(ins_x_lim) - 0.01, np.max(ins_x_lim) + 0.01])
+        inset_ax.set_ylim([np.min(ins_y_lim) - 0.01, np.max(ins_y_lim) + 0.01])
+        inset_ax.set_zlim([np.min(ins_z_lim) - 0.01, np.max(ins_z_lim) + 0.01])
+        inset_ax.set_xticks([np.round(np.min(ins_x_lim), 2), np.round(np.max(ins_x_lim), 2)])
+        inset_ax.set_yticks([np.round(np.min(ins_y_lim), 2), np.round(np.max(ins_y_lim), 2)])
+        inset_ax.set_zticks([np.round(np.min(ins_z_lim), 2), np.round(np.max(ins_z_lim), 2)])
+        inset_ax.set_title("Zoomed Projection")
+        inset_ax.set_xlabel("X")
+        inset_ax.set_ylabel("Y")
+        inset_ax.set_zlabel("Z")
+
+        if os.path.isdir(os.path.join(output_folder_img, str(height))):
+            plt.savefig(plot_file)
+            plt.close()
+        else:
+            os.makedirs(os.path.join(output_folder_img, str(height)), exist_ok=True)
+            plt.savefig(plot_file)
+            plt.close()
+
+        plotted_pixels.append(pixel)
+
+    return plotted_pixels
+
+
+def plotting_pixel_transition_vectors_decoupled_mp(
+    data_location,
+    checkpoint_folder,
+    checkpoint_data_file,
+    checkpoint_plot_file,
+    celestial_object,
+    output_folder_img,
+    batch_size=5000,
+):
+    """
+    Function to process pixels in batches, skipping already processed pixels.
+    """
+    os.makedirs(output_folder_img, exist_ok=True)
+
+    # Load checkpoint data and plots
+    checkpoint_data = load_checkpoint(checkpoint_folder, checkpoint_data_file)
+    checkpoint_plots = load_checkpoint(checkpoint_folder, checkpoint_plot_file)
+    if checkpoint_plots is None:
+        checkpoint_plots = {"plotted_pixels": []}
+    data = read_compressed_json(data_location)
+
+    # Get the list of all pixels and filter out already processed ones
+    all_pixels = list(data.keys())
+    processed_pixels = checkpoint_plots["plotted_pixels"]
+    unprocessed_pixels = [pixel for pixel in all_pixels if pixel not in processed_pixels]
+    total_pixels = len(all_pixels)
+
+    # Initialize progress bar
+    progress_bar = tqdm(total=total_pixels, desc="Creating 3D Pixel Vector Plots")
+    progress_bar.update(len(processed_pixels))  # Update progress bar for already processed pixels
+
+    # Process pixels in batches
+    for i in range(0, len(unprocessed_pixels), batch_size):
+        batch_pixels = unprocessed_pixels[i : i + batch_size]
+
+        with Pool() as pool:
+            results = pool.starmap(
+                plot_pixel_batch, [(batch_pixels, data, checkpoint_data, output_folder_img, celestial_object)]
+            )
+
+            for plotted_pixels in results:
+                checkpoint_plots["plotted_pixels"].extend(plotted_pixels)
+                save_checkpoint(checkpoint_folder, checkpoint_plot_file, checkpoint_plots)
+                progress_bar.update(len(plotted_pixels))
+
     progress_bar.close()
 
 
@@ -1285,7 +1625,18 @@ def trilaterate(positions: np.ndarray, radii: np.ndarray, raise_on_no_solution: 
     if distance13 > radius1 + radius3 or distance13 < abs(radius1 - radius3):
         raise ValueError("Spheres 1 and 3 do not overlap, no solution exists.")
     if distance23 > radius2 + radius3 or distance23 < abs(radius2 - radius3):
-        raise ValueError("Spheres 2 and 3 do not overlap, no solution exists.")
+        # Compute the closest point on the unit sphere to the line segment connecting centers of spheres 2 and 3
+        vector23 = center3 - center2
+        unit_vector23 = vector23 / np.linalg.norm(vector23)  # Unit vector along vector23
+        midpoint = center2 + unit_vector23 * (distance23 / 2)  # Midpoint of the line segment
+        closest_point_on_unit_sphere = midpoint / np.linalg.norm(midpoint)  # Project midpoint onto the unit sphere
+        logger.info(
+            "Spheres 2 and 3 do not overlap. A single solution between the two spheres is returned for both solutions"
+        )
+        return np.stack(
+            (closest_point_on_unit_sphere, closest_point_on_unit_sphere)
+        )  # Return as a single point for both intersections
+        # raise ValueError("Spheres 2 and 3 do not overlap, no solution exists.")
 
     # Step 3: Compute basis vectors for the coordinate system
     unit_vector_u = vector21 / distance12  # Unit vector along vector21
@@ -1302,6 +1653,7 @@ def trilaterate(positions: np.ndarray, radii: np.ndarray, raise_on_no_solution: 
 
     # Step 5: Handle cases where the radicand is negative (no exact solution)
     if radicand < 0:
+        logger.debug("Negative radicand %f: no exact solution exists", radicand)
         if raise_on_no_solution:
             raise ValueError(f"Negative radicand {radicand}: no exact solutions exist.")
         return (center1 + unit_vector_u * x + vector_v * y)[np.newaxis, :]  # Return a close-enough solution
@@ -1321,19 +1673,44 @@ def lat_long_to_decimal(input):
     return decimal
 
 
-def maximum_frame_range(frame_range):
-    differences = []
-    for i, _ in enumerate(frame_range):
-        if i == len(frame_range) - 1:
-            continue
-        else:
-            if frame_range[i][0] != frame_range[i + 1][0]:
-                differences.append(
-                    (frame_range[i], frame_range[i + 1], np.abs(frame_range[i + 1][1] - frame_range[i][1]))
-                )
-    max_difference = max(differences, key=lambda item: item[2])
-    frame_range_return = [max_difference[0], max_difference[1]]
-    return frame_range_return, max_difference[2]
+def maximum_frame_range(frame_ranges):
+    """
+    Calculates the maximum range (duration) between sequential frames
+    where the transition type alternates between bright (1) and dark (0).
+
+    Parameters:
+        frame_ranges (list of tuples): Each tuple contains (transition_type, frame_number).
+                                       transition_type is 1 for bright and 0 for dark.
+                                       frame_number is an integer representing the frame number.
+
+    Returns:
+        tuple: A tuple containing:
+            - max_range_frames (list): The two tuples representing the start and end of the maximum range.
+            - max_duration (int): The maximum duration between sequential frames.
+    """
+    # Ensure the input list is sorted by frame_number
+    frame_ranges = sorted(frame_ranges, key=lambda x: x[1])
+
+    # Initialize variables to track the maximum duration and corresponding frame range
+    max_duration = 0
+    max_range_frames = None
+
+    # Iterate through the sorted list to calculate differences between sequential frames
+    for i in range(len(frame_ranges) - 1):
+        current_frame = frame_ranges[i]
+        next_frame = frame_ranges[i + 1]
+
+        # Check if the transition types alternate (bright -> dark or dark -> bright)
+        if current_frame[0] != next_frame[0]:
+            # Calculate the duration between the current and next frame
+            duration = abs(next_frame[1] - current_frame[1])
+
+            # Update the maximum duration and corresponding frame range if needed
+            if duration > max_duration:
+                max_duration = duration
+                max_range_frames = [current_frame, next_frame]
+
+    return max_range_frames, max_duration
 
 
 def frame_number_from_img_name(image_name_str):
@@ -1370,15 +1747,17 @@ def define_observation_time(video_time, time_offset):
 
 # Example usage
 if __name__ == "__main__":
+    start_time = time.time()
+    logger.info(f"Code Start Time: {time.ctime(start_time)}.")
     # File Locations
     json_data_location = "//snl/Collaborative/NSTTF_Optics/Projects/_Directories/NSTTF_Optics_LookbackExEx/Experiments/2025-06_05_NsttfTunedFacetScan1dof/3_Post/DSC_0025/7_pixel_timing_interrogation/time_history_transition_parallel_facet.json.gz"
     output_folder_img = "//snl/Collaborative/NSTTF_Optics/Projects/_Directories/NSTTF_Optics_LookbackExEx/Experiments/2025-06_05_NsttfTunedFacetScan1dof/3_Post/DSC_0025/8_pixel_vector_information/pixel_vector_plots"
-    output_folder_vector = "//snl/Collaborative/NSTTF_Optics/Projects/_Directories/NSTTF_Optics_LookbackExEx/Experiments/2025-06_05_NsttfTunedFacetScan1dof/3_Post/DSC_0025/8_pixel_vector_information/parallel"
-    output_vector_data_name = "pixel_vector_information_wslope.json.gz"
+    output_folder_vector = "//snl/Collaborative/NSTTF_Optics/Projects/_Directories/NSTTF_Optics_LookbackExEx/Experiments/2025-06_05_NsttfTunedFacetScan1dof/3_Post/DSC_0025/8_pixel_vector_information/debug"
+    output_vector_data_name = "pixel_vector_information_wslope_debug.json.gz"
     video_file_path = r"//snl/Collaborative/NSTTF_Optics/Projects/_Directories/NSTTF_Optics_LookbackExEx/Experiments/2025-06_05_NsttfTunedFacetScan1dof/3_Post/DSC_0025/DSC_0025.MOV"  # Video Path Used to Generate Frames
     checkpoint_dir = "//snl/Collaborative/NSTTF_Optics/Projects/_Directories/NSTTF_Optics_LookbackExEx/Experiments/2025-06_05_NsttfTunedFacetScan1dof/3_Post/DSC_0025/0_checkpoints"
-    checkpoint_file_data = "pixel_vector_checkpoint_info_parallel.json"
-    checkpoint_file_3d_plots = "pixel_vector_3D plotting_checkpoint.json"
+    checkpoint_file_data = "pixel_vector_checkpoint_info_parallel_debug.json"
+    checkpoint_file_3d_plots = "pixel_vector_3D plotting_checkpoint_debug.json"
 
     celestial_object = "sun"
     metadata = extract_video_metadata_exiftool(video_file_path)
@@ -1431,7 +1810,7 @@ if __name__ == "__main__":
     )
     '''
 
-    camera_time_shift = timedelta(hours=5, minutes=50, seconds=0)
+    camera_time_shift = timedelta(hours=0, minutes=0, seconds=0)
 
     extract_pixel_timing_and_celestial_vectors_parallel(
         celestial_object_name=celestial_object,
@@ -1446,12 +1825,17 @@ if __name__ == "__main__":
         checkpoint_file=checkpoint_file_data,
         batch_size=5000,
     )
+    math_time = time.time() - start_time
+    logger.info(f"Completed Astronomy and Math in {math_time:.4f} seconds.")
 
-    plotting_pixel_transition_vectors_decoupled(
+    plotting_pixel_transition_vectors_decoupled_mp(
         data_location=os.path.join(output_folder_vector, output_vector_data_name),
         checkpoint_folder=checkpoint_dir,
         checkpoint_data_file=checkpoint_file_data,
         checkpoint_plot_file=checkpoint_file_3d_plots,
         celestial_object=celestial_object,
         output_folder_img=output_folder_img,
+        batch_size=1000,
     )
+    plot_time = time.time() - start_time
+    logger.info(f"Completed Plotting in {plot_time:.4f} seconds measured from start.")

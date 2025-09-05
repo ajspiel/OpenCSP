@@ -601,10 +601,20 @@ def create_timing_plots_with_pillow(
         draw.text((width // 2 - margin, height - margin + 20), "Frame Number", fill="black", font=font)
 
         # Save the plot to the output folder
-        plot_file = os.path.join(output_folder, f"pixel_{pixel}_timing_plot_PIL.jpg")
-        img.save(plot_file)
-        write_compressed_json(binary_state, os.path.join(output_folder, f"pixel_{pixel}_timing_plot_data.json.gz"))
-
+        height, _ = eval(pixel)
+        if os.path.isdir(os.path.join(output_folder, str(height))):
+            plot_file = os.path.normpath(os.path.join(output_folder, str(height), f"pixel_{pixel}_timing_plot_PIL.jpg"))
+            img.save(plot_file)
+            write_compressed_json(
+                binary_state, os.path.join(output_folder, str(height), f"pixel_{pixel}_timing_plot_data.json.gz")
+            )
+        else:
+            os.makedirs(os.path.join(output_folder, str(height)), exist_ok=True)
+            plot_file = os.path.normpath(os.path.join(output_folder, str(height), f"pixel_{pixel}_timing_plot_PIL.jpg"))
+            img.save(plot_file)
+            write_compressed_json(
+                binary_state, os.path.join(output_folder, str(height), f"pixel_{pixel}_timing_plot_data.json.gz")
+            )
         # Update checkpoint
         checkpoint_data["processed_pixels"].append(pixel)
         save_checkpoint(checkpoint_folder, checkpoint_file, checkpoint_data, print_path=False)

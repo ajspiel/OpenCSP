@@ -6,6 +6,7 @@ import time
 import subprocess
 from multiprocessing import Pool, Manager
 from opencsp.common.lib.tool.log_tools import multiprocessing_logger
+import opencsp.app.lookback.lookback_tools as lbt
 from logging import DEBUG, ERROR
 
 # import warnings
@@ -21,274 +22,11 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
 # Specify the folder where the log file should be saved
-log_folder = "//snl/Collaborative/NSTTF_Optics/Projects/_Directories/NSTTF_Optics_LookbackExEx/Experiments/2025-06_05_NsttfTunedFacetScan1dof/3_Post/DSC_0025/0_checkpoints/error_logs"  # Replace with your desired folder path
-log_file = os.path.join(log_folder, "error_log_celestial_vectors_debug.txt")
-
-logger = multiprocessing_logger(log_dir_body_ext=log_file, level=ERROR)
-
-'''
-# Ensure the folder exists
-os.makedirs(log_folder, exist_ok=True)
-
-# Create a custom logger
-logger = logging.getLogger(__name__)
-
-# Set the logging level
-logger.setLevel(logging.DEBUG)
-
-# Create a file handler
-file_handler = logging.FileHandler(log_file)
-
-# Set the level for the file handler
-file_handler.setLevel(logging.ERROR)
-
-# Create a formatter and add it to the file handler
-formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-file_handler.setFormatter(formatter)
-
-# Add the file handler to the logger
-logger.addHandler(file_handler)
-'''
-
-
-def save_checkpoint(checkpoint_folder, checkpoint_file_name, checkpoint_data, print_path=True):
-    """
-    Saves the checkpoint data to a JSON file.
-
-    Parameters:
-        checkpoint_file_name (str): Path to the checkpoint file.
-        checkpoint_data (dict): Dictionary containing checkpoint information.
-
-    Returns:
-        None
-    """
-    raw_path = os.path.join(checkpoint_folder, checkpoint_file_name)
-    norm_path = os.path.normpath(raw_path)
-
-    success = False
-    for i in range(10):
-        try:
-            with open(norm_path, 'w', encoding='utf-8') as f:
-                json.dump(checkpoint_data, f, indent=4)
-                success = True
-                break
-        except Exception:
-            logger.error("Unable to save checkpoint", exc_info=True)
-            time.sleep(0.01)
-
-    if success:
-        if print_path and i == 0:
-            logger.info("Checkpoint saved to %s", raw_path)
-        if i > 0:
-            logger.info("Checkpoint saved to %s after %d attempts", raw_path, i)
-
-
-def load_checkpoint(checkpoint_folder, checkpoint_file_name):
-    """
-    Loads the checkpoint data from a JSON file.
-
-    Parameters:
-        checkpoint_folder (str): Path to the folder containing the checkpoint file.
-        checkpoint_file_name (str): Name of the checkpoint file.
-
-    Returns:
-        dict: Dictionary containing checkpoint information, or None if the file is empty or does not exist.
-    """
-    norm_path = os.path.normpath(os.path.join(checkpoint_folder, checkpoint_file_name))
-
-    if os.path.exists(norm_path):
-        # Check if the file is empty
-        if os.path.getsize(norm_path) == 0:
-            print(f"Checkpoint file {norm_path} is empty.")
-            return None
-
-        # Attempt to load the JSON data
-        with open(norm_path, 'r', encoding='utf-8') as f:
-            try:
-                checkpoint_data = json.load(f)
-                # Check if the loaded JSON is empty (e.g., {} or [])
-                if not checkpoint_data:
-                    print(f"Checkpoint file {norm_path} contains empty JSON data.")
-                    return None
-                print(f"Checkpoint loaded from {norm_path}")
-                return checkpoint_data
-            except json.JSONDecodeError:
-                logger.error("Invalid Json File", exc_info=True)
-                print(f"Checkpoint file {norm_path} contains invalid JSON.")
-                return None
-    else:
-        print(f"Checkpoint file {norm_path} does not exist.")
-        return None
-
-
-def custom_serializer(obj):
-    """
-    Custom serializer to handle numpy arrays, datetime objects, floats, integers, and strings.
-    Converts unsupported types into JSON-compatible formats.
-    """
-    try:
-        # Handle numpy arrays
-        if isinstance(obj, np.ndarray):
-            return obj.tolist()  # Convert numpy array to list
-
-        # Handle datetime objects
-        elif isinstance(obj, datetime):
-            return obj.isoformat()  # Convert datetime to ISO 8601 string
-
-        # Handle floats
-        elif isinstance(obj, float):
-            return float(obj)  # Ensure it's a float (JSON-compatible)
-
-        # Handle integers
-        elif isinstance(obj, int):
-            return int(obj)  # Ensure it's an integer (JSON-compatible)
-
-        # Handle strings
-        elif isinstance(obj, str):
-            return str(obj)  # Ensure it's a string (JSON-compatible)
-
-        # Handle sets (convert to list for JSON compatibility)
-        elif isinstance(obj, set):
-            return list(obj)  # Convert set to list
-
-        # Unsupported type
-        else:
-            logger.error("Unsupported type encountered: %r", type(obj), exc_info=True)
-            raise TypeError(f"Type {type(obj)} not serializable")
-
-    except Exception:
-        logger.error("Error during serialization", exc_info=True)
-        raise
-
-
-def custom_deserializer(obj):
-    """
-    Custom deserializer to handle strings, datetime strings, numpy arrays, floats, and integers.
-    Converts JSON-compatible formats back into their original types.
-    """
-    for key, value in obj.items():
-        # Handle numpy arrays (lists of numbers)
-        if isinstance(value, list) and all(isinstance(i, (int, float)) for i in value):
-            try:
-                obj[key] = np.array(value)  # Convert list back to numpy array
-            except ValueError:
-                logger.error("Failed to convert %s to numpy array", key, exc_info=True)
-                # If conversion fails, leave as list
-
-        # Handle datetime strings
-        elif isinstance(value, str):
-            try:
-                obj[key] = datetime.fromisoformat(value)  # Convert ISO 8601 string back to datetime
-            except ValueError:
-                logger.debug("%s is not a valid datetime string, leaving as string.", key, exc_info=True)
-                # If conversion fails, leave as string
-
-        # Handle floats explicitly
-        elif isinstance(value, float):
-            obj[key] = float(value)  # Ensure it's a float (redundant but explicit)
-
-        # Handle integers explicitly
-        elif isinstance(value, int):
-            obj[key] = int(value)  # Ensure it's an integer (redundant but explicit)
-
-        # Handle strings explicitly (fallback case)
-        elif isinstance(value, str):
-            obj[key] = str(value)  # Ensure it's a string (redundant but explicit)
-
-    return obj
-
-
-def read_json(file_path):
-    """
-    Reads a regular JSON file and returns the data.
-
-    Parameters:
-        file_path (str): Path to the .json file.
-
-    Returns:
-        dict or list: Data from the file.
-    """
-    norm_path = os.path.normpath(file_path)
-    try:
-        with open(norm_path, 'r', encoding='utf-8') as f:
-            data = json.load(f, object_hook=custom_deserializer)
-        return data
-    except Exception:
-        logger.error("read_json Error", exc_info=True)
-        return None
-
-
-def write_json(data, file_path):
-    """
-    Writes data to a regular JSON file.
-
-    Parameters:
-        data (dict or list): Data to write to the file.
-        file_path (str): Path to the .json file.
-
-    Returns:
-        None
-    """
-    norm_path = os.path.normpath(file_path)
-    try:
-        with open(norm_path, 'w', encoding='utf-8') as f:
-            json.dump(data, f, indent=4, default=custom_serializer)
-        print(f"Data written to {norm_path}")
-    except Exception:
-        logger.error("write_json Error", exc_info=True)
-
-
-def read_compressed_json(file_path):
-    """
-    Reads a compressed JSON file (.json.gz) and returns the data.
-
-    Parameters:
-        file_path (str): Path to the .json.gz file.
-
-    Returns:
-        list: List of dictionaries containing the data from the file.
-    """
-    norm_path = os.path.normpath(file_path)
-    try:
-        with gzip.open(norm_path, 'rt', encoding='utf-8') as f:
-            data = json.load(f, object_hook=custom_deserializer)
-        return data
-    except Exception:
-        logger.error("read_compressed_json Error", exc_info=True)
-        return None
-
-
-def write_compressed_json(data, file_path, print_path=True):
-    """
-    Writes data to a compressed JSON file (.json.gz).
-
-    Parameters:
-        data (dict or list): Data to write to the file.
-        file_path (str): Path to the .json.gz file.
-
-    Returns:
-        None
-    """
-    norm_path = os.path.normpath(file_path)
-    success = False
-    for i in range(10):
-        try:
-            with gzip.open(norm_path, 'wt', encoding='utf-8') as f:
-                try:
-                    json.dump(data, f, indent=4, default=custom_serializer)
-                    success = True
-                    break
-                except Exception:
-                    logger.error("write_compressed_json Error", exc_info=True)
-                    time.sleep(0.01)
-        except Exception:
-            logger.error("write_compressed_json Error", exc_info=True)
-
-    if success:
-        if print_path and i == 0:
-            logger.info("File Saved to %s", norm_path)
-        if i > 0:
-            logger.info("File saved to %s after %d attempts", norm_path, i)
+logger = lbt.logging_setup(
+    log_folder=os.path.join(os.getcwd, "error_logs"),
+    log_file_name="error_log_celestial_vectors_debug.txt",
+    log_type=ERROR,
+)
 
 
 def extract_video_metadata_exiftool(video_path):
@@ -567,10 +305,10 @@ def extract_pixel_timing_and_celestial_vectors(
     video_start_time = video_start_time.replace(tzinfo=abq_tz)
     # Read in pixel timing information
     # Load checkpoint if it exists
-    checkpoint_data = load_checkpoint(checkpoint_folder, checkpoint_file)
+    checkpoint_data = lbt.load_checkpoint(checkpoint_folder, checkpoint_file)
     if checkpoint_data is None:
         checkpoint_data = {"processed_pixels": [], "pixels_with_data": [], "pixels_without_data": []}
-    data = read_compressed_json(data_location)
+    data = lbt.read_compressed_json(data_location)
     # Create a tqdm progress bar outside the loop
     progress_bar = tqdm(total=len(data), desc="Calculating Pixel Vector Information")
 
@@ -584,13 +322,13 @@ def extract_pixel_timing_and_celestial_vectors(
         if len(data[pixel]) == 0:
             checkpoint_data["processed_pixels"].append(pixel)
             checkpoint_data["pixels_without_data"].append(pixel)
-            save_checkpoint(checkpoint_folder, checkpoint_file, checkpoint_data, print_path=False)
+            lbt.save_checkpoint(checkpoint_folder, checkpoint_file, checkpoint_data, print_path=False)
             progress_bar.update(1)
             continue
         elif len(data[pixel]) < 2:
             checkpoint_data["processed_pixels"].append(pixel)
             checkpoint_data["pixels_without_data"].append(pixel)
-            save_checkpoint(checkpoint_folder, checkpoint_file, checkpoint_data, print_path=False)
+            lbt.save_checkpoint(checkpoint_folder, checkpoint_file, checkpoint_data, print_path=False)
             progress_bar.update(1)
             continue
         elif len(data[pixel]) == 2:
@@ -641,7 +379,7 @@ def extract_pixel_timing_and_celestial_vectors(
             logger.debug("extract_pixel_timing_and_celestial_vectors Error pixel %s", pixel, exc_info=True)
             checkpoint_data["processed_pixels"].append(pixel)
             checkpoint_data["pixels_without_data"].append(pixel)
-            save_checkpoint(checkpoint_folder, checkpoint_file, checkpoint_data, print_path=False)
+            lbt.save_checkpoint(checkpoint_folder, checkpoint_file, checkpoint_data, print_path=False)
             progress_bar.update(1)
             continue
 
@@ -666,11 +404,11 @@ def extract_pixel_timing_and_celestial_vectors(
         )
         checkpoint_data["processed_pixels"].append(pixel)
         checkpoint_data["pixels_with_data"].append(pixel)
-        save_checkpoint(checkpoint_folder, checkpoint_file, checkpoint_data, print_path=False)
-        write_compressed_json(
+        lbt.save_checkpoint(checkpoint_folder, checkpoint_file, checkpoint_data, print_path=False)
+        lbt.write_compressed_json(
             data=data, file_path=os.path.join(output_folder_vector, output_json_name), print_path=False
         )
-        # write_json(data=data, file_path=os.path.join(output_folder_vector, output_json_name[:-3]))
+        # lbt.write_json(data=data, file_path=os.path.join(output_folder_vector, output_json_name[:-3]))
         progress_bar.update(1)
     progress_bar.close()
 
@@ -694,7 +432,7 @@ def process_pixel(args):
     if len(transitions) == 0 or len(transitions) < 2:
         checkpoint_data["processed_pixels"].append(pixel)
         checkpoint_data["pixels_without_data"].append(pixel)
-        # save_checkpoint(checkpoint_folder, checkpoint_file, checkpoint_data, print_path=False)
+        # lbt.save_checkpoint(checkpoint_folder, checkpoint_file, checkpoint_data, print_path=False)
         return pixel, None, checkpoint_data
 
     if len(transitions) == 2:
@@ -775,7 +513,7 @@ def process_pixel(args):
 
         checkpoint_data["processed_pixels"].append(pixel)
         checkpoint_data["pixels_with_data"].append(pixel)
-        # save_checkpoint(checkpoint_folder, checkpoint_file, checkpoint_data, print_path=False)
+        # lbt.save_checkpoint(checkpoint_folder, checkpoint_file, checkpoint_data, print_path=False)
     # except ValueError:
     except Exception:
         logger.debug("process_pixel Error pixel %s", pixel, exc_info=True)
@@ -804,7 +542,7 @@ def process_pixel(args):
             logger.debug("process_pixel Error pixel %s", pixel, exc_info=True)
             checkpoint_data["processed_pixels"].append(pixel)
             checkpoint_data["pixels_without_data"].append(pixel)
-            # save_checkpoint(checkpoint_folder, checkpoint_file, checkpoint_data, print_path=False)
+            # lbt.save_checkpoint(checkpoint_folder, checkpoint_file, checkpoint_data, print_path=False)
             return pixel, pixel_data, checkpoint_data
 
     return pixel, pixel_data, checkpoint_data
@@ -831,7 +569,7 @@ def extract_pixel_timing_and_celestial_vectors_parallel(
     abq_tz = ZoneInfo("America/Denver")
     video_start_time = video_start_time.replace(tzinfo=abq_tz)
 
-    checkpoint_data = load_checkpoint(checkpoint_folder, checkpoint_file)
+    checkpoint_data = lbt.load_checkpoint(checkpoint_folder, checkpoint_file)
     if checkpoint_data is None:
         checkpoint_data = {"processed_pixels": [], "pixels_with_data": [], "pixels_without_data": []}
 
@@ -895,7 +633,7 @@ def extract_pixel_timing_and_celestial_vectors_parallel(
                     checkpoint_data["pixels_without_data"].append(wpixel[0])
 
             # Save checkpoint data serially after each batch
-            save_checkpoint(checkpoint_folder, checkpoint_file, checkpoint_data, print_path=False)
+            lbt.save_checkpoint(checkpoint_folder, checkpoint_file, checkpoint_data, print_path=False)
 
             # Update the data with processed results
             for pixel, pixel_data, _ in results:
@@ -904,7 +642,7 @@ def extract_pixel_timing_and_celestial_vectors_parallel(
 
             # Save intermediate results to avoid data loss
             if results:
-                write_compressed_json(
+                lbt.write_compressed_json(
                     data=data,
                     file_path=os.path.join(
                         output_folder_vector, f"{output_json_name}_batch_{batch_start}_{batch_end}.json.gz"
@@ -916,7 +654,7 @@ def extract_pixel_timing_and_celestial_vectors_parallel(
     if os.path.exists(os.path.join(output_folder_vector, output_json_name)):
         pass
     else:
-        write_compressed_json(
+        lbt.write_compressed_json(
             data=data, file_path=os.path.join(output_folder_vector, output_json_name), print_path=True
         )
 
@@ -1127,11 +865,11 @@ def plotting_pixel_transition_vectors_decoupled(
     # Ensure the output folder exists
     os.makedirs(output_folder_img, exist_ok=True)
 
-    checkpoint_data = load_checkpoint(checkpoint_folder, checkpoint_data_file)
-    checkpoint_plots = load_checkpoint(checkpoint_folder, checkpoint_plot_file)
+    checkpoint_data = lbt.load_checkpoint(checkpoint_folder, checkpoint_data_file)
+    checkpoint_plots = lbt.load_checkpoint(checkpoint_folder, checkpoint_plot_file)
     if checkpoint_plots is None:
         checkpoint_plots = {"plotted_pixels": []}
-    data = read_compressed_json(data_location)
+    data = lbt.read_compressed_json(data_location)
     # Create a tqdm progress bar outside the loop
     progress_bar = tqdm(total=len(data), desc="Creating 3D Pixel Vector Plots")
 
@@ -1339,7 +1077,7 @@ def plotting_pixel_transition_vectors_decoupled(
             plt.savefig(plot_file)
             plt.close()
         checkpoint_plots["plotted_pixels"].append(pixel)
-        save_checkpoint(checkpoint_folder, checkpoint_plot_file, checkpoint_plots)
+        lbt.save_checkpoint(checkpoint_folder, checkpoint_plot_file, checkpoint_plots)
         progress_bar.update(1)
     progress_bar.close()
 
@@ -1554,11 +1292,11 @@ def plotting_pixel_transition_vectors_decoupled_mp(
     os.makedirs(output_folder_img, exist_ok=True)
 
     # Load checkpoint data and plots
-    checkpoint_data = load_checkpoint(checkpoint_folder, checkpoint_data_file)
-    checkpoint_plots = load_checkpoint(checkpoint_folder, checkpoint_plot_file)
+    checkpoint_data = lbt.load_checkpoint(checkpoint_folder, checkpoint_data_file)
+    checkpoint_plots = lbt.load_checkpoint(checkpoint_folder, checkpoint_plot_file)
     if checkpoint_plots is None:
         checkpoint_plots = {"plotted_pixels": []}
-    data = read_compressed_json(data_location)
+    data = lbt.read_compressed_json(data_location)
 
     # Get the list of all pixels and filter out already processed ones
     all_pixels = list(data.keys())
@@ -1581,7 +1319,7 @@ def plotting_pixel_transition_vectors_decoupled_mp(
 
             for plotted_pixels in results:
                 checkpoint_plots["plotted_pixels"].extend(plotted_pixels)
-                save_checkpoint(checkpoint_folder, checkpoint_plot_file, checkpoint_plots)
+                lbt.save_checkpoint(checkpoint_folder, checkpoint_plot_file, checkpoint_plots)
                 progress_bar.update(len(plotted_pixels))
 
     progress_bar.close()
@@ -1748,7 +1486,6 @@ def define_observation_time(video_time, time_offset):
 # Example usage
 if __name__ == "__main__":
     start_time = time.time()
-    logger.info(f"Code Start Time: {time.ctime(start_time)}.")
     # File Locations
     json_data_location = "//snl/Collaborative/NSTTF_Optics/Projects/_Directories/NSTTF_Optics_LookbackExEx/Experiments/2025-06_05_NsttfTunedFacetScan1dof/3_Post/DSC_0025/7_pixel_timing_interrogation/time_history_transition_parallel_facet.json.gz"
     output_folder_img = "//snl/Collaborative/NSTTF_Optics/Projects/_Directories/NSTTF_Optics_LookbackExEx/Experiments/2025-06_05_NsttfTunedFacetScan1dof/3_Post/DSC_0025/8_pixel_vector_information/pixel_vector_plots"
@@ -1758,6 +1495,8 @@ if __name__ == "__main__":
     checkpoint_dir = "//snl/Collaborative/NSTTF_Optics/Projects/_Directories/NSTTF_Optics_LookbackExEx/Experiments/2025-06_05_NsttfTunedFacetScan1dof/3_Post/DSC_0025/0_checkpoints"
     checkpoint_file_data = "pixel_vector_checkpoint_info_parallel_debug.json"
     checkpoint_file_3d_plots = "pixel_vector_3D plotting_checkpoint_debug.json"
+
+    logger.info(f"Code Start Time: {time.ctime(start_time)}.")
 
     celestial_object = "sun"
     metadata = extract_video_metadata_exiftool(video_file_path)

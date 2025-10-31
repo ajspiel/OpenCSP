@@ -28,3 +28,9 @@ doc/html/
 opencsp/de430t.bsp
 opencsp/app/lookback/de430.bsp
 *.bsp
+
+# Example Output
+*/example/**
+
+# Lookback Error Logs
+*/error_logs

@@ -9,6 +9,7 @@ import random as rng
 from datetime import datetime, timezone, timedelta
 import ast  # For safe parsing of string tuples
 from scipy.interpolate import griddata
+from logging import DEBUG, ERROR
 
 
 import imageio.v3 as imageio
@@ -18,13 +19,14 @@ import cv2 as cv
 import opencsp.common.lib.tool.image_tools as it
 import opencsp.common.lib.tool.file_tools as ft
 import opencsp.common.lib.tool.log_tools as lt
+import opencsp.app.lookback.lookback_tools as lbt
 
 # Specify the folder where the log file should be saved
-log_folder = "//snl/Collaborative/NSTTF_Optics/Projects/_Directories/NSTTF_Optics_LookbackExEx/Experiments/2025-06_05_NsttfTunedFacetScan1dof/3_Post/DSC_0025/0_checkpoints/error_logs"  # Replace with your desired folder path
-log_file = join(log_folder, "error_log_sofast_data_style_create_debug.txt")
-
-# Set up logger
-logger = lt.logger(log_dir_body_ext=log_file, level=lt.log.WARN)
+logger = lbt.logging_setup(
+    log_folder=os.path.join(os.getcwd, "error_logs"),
+    log_file_name="error_log_slope_errors_and_plotting.txt",
+    log_type=ERROR,
+)
 
 
 '''
@@ -349,8 +351,8 @@ def apply_homography_to_pixel_and_vectors(homography_matrix, pixel_coord, normal
 def warp_mirror_pixels_and_data(
     compressed_json_path, homography_matrix, warped_image, original_image, target_points_for_warp
 ):
-    data = read_compressed_json(compressed_json_path)
-    # chkpt_data = read_json(chkpt_data_path)
+    data = lbt.read_compressed_json(compressed_json_path)
+    # chkpt_data = lbt.read_json(chkpt_data_path)
     warped_points = []
     for point in target_points_for_warp:
         new_pixel_coords, _ = apply_homography_to_pixel_and_vectors(
@@ -381,6 +383,9 @@ def warp_mirror_pixels_and_data(
                         reference_vector=details["observer_vector"],
                         sample_vectors=np.array([details["slope_1"], details["slope_2"]]),
                     )
+                    angle_between = calculate_angle_between_vectors(
+                        details['start_vector']['celestial_to_target'], details['end_vector']['celestial_to_target']
+                    )
 
                     new_data[pixel].update(
                         {
@@ -390,6 +395,7 @@ def warp_mirror_pixels_and_data(
                             "compared_to": "observer_vector",
                             "slope_differences": slope_differences,
                             "slope_errors": slope_errors,
+                            "angle_between": angle_between,
                         }
                     )
                 else:
@@ -405,6 +411,9 @@ def warp_mirror_pixels_and_data(
                         reference_vector=details["observer_vector"],
                         sample_vectors=np.array([details["slope_1"], details["slope_2"]]),
                     )
+                    angle_between = calculate_angle_between_vectors(
+                        details['start_vector']['celestial_to_target'], details['end_vector']['celestial_to_target']
+                    )
                     new_data[pixel].update(
                         {
                             "plot_color": "b",
@@ -413,6 +422,7 @@ def warp_mirror_pixels_and_data(
                             "compared_to": "observer_vector",
                             "slope_differences": slope_differences,
                             "slope_errors": slope_errors,
+                            "angle_between": angle_between,
                         }
                     )
             else:
@@ -438,7 +448,7 @@ def warp_mirror_pixels_and_data(
 
     for pixel, details in new_data.items():
         # Parse pixel coordinates safely
-        row, col = ast.literal_eval(pixel)  # Replace eval with ast.literal_eval
+        row, col = ast.literal_eval(pixel)
 
         if isinstance(details, dict):
             if details["slope_1"].size < 3 or details["slope_2"].size < 3:
@@ -586,11 +596,9 @@ def calculate_slope_differences(reference_vector, sample_vectors):
         sample_vectors (list or np.ndarray): A list or array of 3D vectors [[x1, y1, z1], [x2, y2, z2], ...].
 
     Returns:
-        dict: A dictionary containing the differences and errors for each sample vector.
-              {
+        lists: A list containing the differences and errors for each sample vector.
                   "differences": [[dx1, dy1, dz1], [dx2, dy2, dz2], ...],
                   "errors": [error1, error2, ...]
-              }
     """
     # Ensure inputs are numpy arrays for easier manipulation
     reference_vector = np.array(reference_vector)
@@ -737,251 +745,291 @@ def plot_error_contours(data_dict):
         plot_set(x_coords_set2, y_coords_set2, slope_errors_set2, x_errors_set2, y_errors_set2, z_errors_set2, "Set 2")
 
 
-def save_checkpoint(checkpoint_folder, checkpoint_file_name, checkpoint_data, print_path=True):
+def plot_slope_heat_maps(data_dict):
     """
-    Saves the checkpoint data to a JSON file.
+    Iterates through a dictionary with pixel coordinates as keys, extracts up to two sets of data,
+    and plots contour plots for each set separately.
 
     Parameters:
-        checkpoint_file_name (str): Path to the checkpoint file.
-        checkpoint_data (dict): Dictionary containing checkpoint information.
+        pixel_dict (dict): A dictionary where:
+            - Keys are pixel coordinates (tuples) like (x, y).
+            - Values are either:
+                - Sub-dictionaries containing:
+                    - "slope_1" or "slope_2": List of up to two sets of [nx, ny, nz].
+                    - "angle_between": Float of angle between start and end vector.
+                - Empty ndarray for pixels without data.
 
     Returns:
-        None
+        None: Displays the contour plots for both sets of data.
     """
-    raw_path = os.path.join(checkpoint_folder, checkpoint_file_name)
-    norm_path = os.path.normpath(raw_path)
+    # Initialize lists to store data for the first and second sets
+    x_coords_set, y_coords_set, slope_set1, slope_set2, angle_between = [], [], [], [], []
 
-    success = False
-    for i in range(10):
-        try:
-            with open(norm_path, 'w', encoding='utf-8') as f:
-                json.dump(checkpoint_data, f, indent=4)
-                success = True
-                break
-        except Exception:
-            logger.error("Unable to save checkpoint", exc_info=True)
-            time.sleep(0.01)
-
-    if success:
-        if print_path and i == 0:
-            logger.info("Checkpoint saved to %s", raw_path)
-        if i > 0:
-            logger.info("Checkpoint saved to %s after %d attempts", raw_path, i)
-
-
-def load_checkpoint(checkpoint_folder, checkpoint_file_name):
-    """
-    Loads the checkpoint data from a JSON file.
-
-    Parameters:
-        checkpoint_folder (str): Path to the folder containing the checkpoint file.
-        checkpoint_file_name (str): Name of the checkpoint file.
-
-    Returns:
-        dict: Dictionary containing checkpoint information, or None if the file is empty or does not exist.
-    """
-    norm_path = os.path.normpath(os.path.join(checkpoint_folder, checkpoint_file_name))
-
-    if os.path.exists(norm_path):
-        # Check if the file is empty
-        if os.path.getsize(norm_path) == 0:
-            print(f"Checkpoint file {norm_path} is empty.")
-            return None
-
-        # Attempt to load the JSON data
-        with open(norm_path, 'r', encoding='utf-8') as f:
-            try:
-                checkpoint_data = json.load(f)
-                # Check if the loaded JSON is empty (e.g., {} or [])
-                if not checkpoint_data:
-                    print(f"Checkpoint file {norm_path} contains empty JSON data.")
-                    return None
-                print(f"Checkpoint loaded from {norm_path}")
-                return checkpoint_data
-            except json.JSONDecodeError:
-                logger.error("Invalid Json File", exc_info=True)
-                print(f"Checkpoint file {norm_path} contains invalid JSON.")
-                return None
-    else:
-        print(f"Checkpoint file {norm_path} does not exist.")
-        return None
-
-
-def custom_serializer(obj):
-    """
-    Custom serializer to handle numpy arrays, datetime objects, floats, integers, and strings.
-    Converts unsupported types into JSON-compatible formats.
-    """
-    try:
-        # Handle numpy arrays
-        if isinstance(obj, np.ndarray):
-            return obj.tolist()  # Convert numpy array to list
-
-        # Handle datetime objects
-        elif isinstance(obj, datetime):
-            return obj.isoformat()  # Convert datetime to ISO 8601 string
-
-        # Handle floats
-        elif isinstance(obj, float):
-            return float(obj)  # Ensure it's a float (JSON-compatible)
-
-        # Handle integers
-        elif isinstance(obj, int):
-            return int(obj)  # Ensure it's an integer (JSON-compatible)
-
-        # Handle strings
-        elif isinstance(obj, str):
-            return str(obj)  # Ensure it's a string (JSON-compatible)
-
-        # Handle sets (convert to list for JSON compatibility)
-        elif isinstance(obj, set):
-            return list(obj)  # Convert set to list
-
-        # Unsupported type
+    # Iterate through the dictionary
+    for pixel, data in data_dict.items():
+        if isinstance(data, dict):  # Check if the value is a sub-dictionary
+            # Extract the first set of data
+            if data["slope_1"].size < 3 or data["slope_2"].size < 3:
+                continue
+            elif len(data["slope_1"]) > 0:
+                row, col = ast.literal_eval(pixel)
+                x_coords_set.append(col)
+                y_coords_set.append(row)
+                slope_set1.append(data["slope_1"])
+                slope_set2.append(data["slope_2"])
+                angle_between.append(data["angle_between"])
+        elif isinstance(data, np.ndarray) and len(data) == 0:  # Skip empty lists
+            continue
         else:
-            logger.error("Unsupported type encountered: %r", type(obj), exc_info=True)
-            raise TypeError(f"Type {type(obj)} not serializable")
+            raise ValueError(f"Unexpected data format for pixel {pixel}: {data}")
 
-    except Exception:
-        logger.error("Error during serialization", exc_info=True)
-        raise
+    best_slope_1 = ransac_average_direction(np.array(slope_set1))
+    best_slope_2 = ransac_average_direction(np.array(slope_set2))
+
+    plot_angle_between_vectors(x_coords_set, y_coords_set, angle_between)
+
+    plot_heat_maps_no_comparison(x_coords_set, y_coords_set, slope_set1, "Set 1")
+
+    plot_heat_maps_no_comparison(x_coords_set, y_coords_set, slope_set2, "Set 2")
+
+    plot_heat_maps(x_coords_set, y_coords_set, slope_set1, best_slope_1, "Set 1")
+
+    plot_heat_maps(x_coords_set, y_coords_set, slope_set2, best_slope_2, "Set 2")
+
+    plot_heat_maps_radians(x_coords_set, y_coords_set, slope_set1, best_slope_1, "Set 1 Radians")
+
+    plot_heat_maps_radians(x_coords_set, y_coords_set, slope_set2, best_slope_2, "Set 2 Radians")
+
+    print("done")
 
 
-def custom_deserializer(obj):
+def calculate_angle_between_vectors(vector1: np.ndarray, vector2: np.ndarray) -> float:
     """
-    Custom deserializer to handle strings, datetime strings, numpy arrays, floats, and integers.
-    Converts JSON-compatible formats back into their original types.
-    """
-    for key, value in obj.items():
-        # Handle numpy arrays (lists of numbers)
-        if isinstance(value, list) and all(isinstance(i, (int, float)) for i in value):
-            try:
-                obj[key] = np.array(value)  # Convert list back to numpy array
-            except ValueError:
-                logger.error("Failed to convert %s to numpy array", key, exc_info=True)
-                # If conversion fails, leave as list
-
-        # Handle datetime strings
-        elif isinstance(value, str):
-            try:
-                obj[key] = datetime.fromisoformat(value)  # Convert ISO 8601 string back to datetime
-            except ValueError:
-                logger.debug("%s is not a valid datetime string, leaving as string.", key, exc_info=True)
-                # If conversion fails, leave as string
-
-        # Handle floats explicitly
-        elif isinstance(value, float):
-            obj[key] = float(value)  # Ensure it's a float (redundant but explicit)
-
-        # Handle integers explicitly
-        elif isinstance(value, int):
-            obj[key] = int(value)  # Ensure it's an integer (redundant but explicit)
-
-        # Handle strings explicitly (fallback case)
-        elif isinstance(value, str):
-            obj[key] = str(value)  # Ensure it's a string (redundant but explicit)
-
-    return obj
-
-
-def read_json(file_path):
-    """
-    Reads a regular JSON file and returns the data.
+    Calculates the angle (in radians) between two unit vectors in 3D space.
 
     Parameters:
-        file_path (str): Path to the .json file.
+        vector1 (np.ndarray): A 3D unit vector [x, y, z].
+        vector2 (np.ndarray): A 3D unit vector [x, y, z].
 
     Returns:
-        dict or list: Data from the file.
+        float: The angle between the two vectors in radians.
     """
-    norm_path = os.path.normpath(file_path)
-    try:
-        with open(norm_path, 'r', encoding='utf-8') as f:
-            data = json.load(f, object_hook=custom_deserializer)
-        return data
-    except Exception:
-        logger.error("read_json Error", exc_info=True)
-        return None
+    # Ensure the input vectors are unit vectors
+    if not np.isclose(np.linalg.norm(vector1), 1.0):
+        raise ValueError("vector1 is not a unit vector.")
+    if not np.isclose(np.linalg.norm(vector2), 1.0):
+        raise ValueError("vector2 is not a unit vector.")
+
+    # Compute the dot product of the two vectors
+    dot_product = np.dot(vector1, vector2)
+
+    # Clamp the dot product to the range [-1, 1] to avoid numerical errors
+    dot_product = np.clip(dot_product, -1.0, 1.0)
+
+    # Calculate the angle using arccos
+    angle = np.arccos(dot_product)
+
+    return angle
 
 
-def write_json(data, file_path):
+def plot_angle_between_vectors(x_coords, y_coords, angles_between):
+    # Convert lists to numpy arrays
+    x_coords = np.array(x_coords)
+    y_coords = np.array(y_coords)
+    # Create a grid for contour plotting
+    grid_x, grid_y = np.meshgrid(
+        np.linspace(x_coords.min(), x_coords.max(), 500), np.linspace(y_coords.min(), y_coords.max(), 500)
+    )
+
+    angles = griddata((x_coords, y_coords), angles_between, (grid_x, grid_y), method="linear")
+
+    fig, ax = plt.subplots()
+    contour = ax.contourf(grid_x, grid_y, angles, cmap="jet", levels=250)  # vmin=scale_min, vmax=scale_max
+    cbar = plt.colorbar(contour, ax=ax)
+    ax.set_xlabel("X Pixel Location")
+    ax.set_ylabel("Y Pixel Location")
+    ax.set_title("Coverage Map Type Plot Heat Map")
+    cbar.set_label("Angle Between Vectors [Radians]")
+    ax.invert_yaxis()
+
+
+def plot_heat_maps_no_comparison(x_coords, y_coords, slopes, set_label):
+    # Convert lists to numpy arrays
+    x_coords = np.array(x_coords)
+    y_coords = np.array(y_coords)
+    slopes = np.array(slopes)
+
+    # scale_max = np.max([slope_diff_norms])
+    # scale_min = np.min([slope_diff_norms])
+    # Create a grid for contour plotting
+    grid_x, grid_y = np.meshgrid(
+        np.linspace(x_coords.min(), x_coords.max(), 500), np.linspace(y_coords.min(), y_coords.max(), 500)
+    )
+
+    # Interpolate errors onto the grid
+    error_grid = {
+        "X Value": griddata((x_coords, y_coords), slopes[:, 0], (grid_x, grid_y), method="linear"),
+        "Y Value": griddata((x_coords, y_coords), slopes[:, 1], (grid_x, grid_y), method="linear"),
+        "Z Value": griddata((x_coords, y_coords), slopes[:, 2], (grid_x, grid_y), method="linear"),
+    }
+
+    # Plot each error type as a contour plot
+    fig, axes = plt.subplots(1, 3, figsize=(24, 7))
+    error_types = ["X Value", "Y Value", "Z Value"]
+    for ax, error_type in zip(axes.flat, error_types):
+        contour = ax.contourf(
+            grid_x, grid_y, error_grid[error_type], cmap="jet", levels=500  # , vmin=scale_min, vmax=scale_max
+        )
+        ax.scatter(x_coords, y_coords, s=0.1, c='k', marker='.')
+        cbar = plt.colorbar(contour, ax=ax)
+        ax.set_title(f"{error_type} Heat Map ({set_label})")
+        ax.set_xlabel("X Pixel Location")
+        ax.set_ylabel("Y Pixel Location")
+        cbar.set_label(f"{error_type}")
+        ax.invert_yaxis()
+
+    plt.tight_layout()
+    # plt.show()
+
+
+def plot_heat_maps(x_coords, y_coords, slopes, best_slope, set_label):
+    # Convert lists to numpy arrays
+    x_coords = np.array(x_coords)
+    y_coords = np.array(y_coords)
+    slopes = np.array(slopes)
+
+    slope_differences, slope_diff_norms = calculate_slope_differences(best_slope, slopes)
+    slope_differences = np.array(slope_differences)
+    slope_diff_norms = np.array(slope_diff_norms)
+
+    # scale_max = np.max([slope_diff_norms])
+    # scale_min = np.min([slope_diff_norms])
+    # Create a grid for contour plotting
+    grid_x, grid_y = np.meshgrid(
+        np.linspace(x_coords.min(), x_coords.max(), 500), np.linspace(y_coords.min(), y_coords.max(), 500)
+    )
+
+    # Interpolate errors onto the grid
+    error_grid = {
+        "Norm Difference": griddata((x_coords, y_coords), slope_diff_norms, (grid_x, grid_y), method="linear"),
+        "X Difference": griddata((x_coords, y_coords), slope_differences[:, 0], (grid_x, grid_y), method="linear"),
+        "Y Difference": griddata((x_coords, y_coords), slope_differences[:, 1], (grid_x, grid_y), method="linear"),
+        "Z Difference": griddata((x_coords, y_coords), slope_differences[:, 2], (grid_x, grid_y), method="linear"),
+    }
+
+    # Plot each error type as a contour plot
+    fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+    error_types = ["Norm Difference", "X Difference", "Y Difference", "Z Difference"]
+    for ax, error_type in zip(axes.flat, error_types):
+        contour = ax.contourf(
+            grid_x, grid_y, error_grid[error_type], cmap="jet", levels=500  # , vmin=scale_min, vmax=scale_max
+        )
+        cbar = plt.colorbar(contour, ax=ax)
+        ax.set_title(f"{error_type} Heat Map ({set_label})")
+        ax.set_xlabel("X Pixel Location")
+        ax.set_ylabel("Y Pixel Location")
+        cbar.set_label(f"{error_type}")
+        ax.invert_yaxis()
+
+    plt.tight_layout()
+    # plt.show()
+
+
+def plot_heat_maps_radians(x_coords, y_coords, slopes, best_slope, set_label):
+    # Convert lists to numpy arrays
+    x_coords = np.array(x_coords)
+    y_coords = np.array(y_coords)
+    slopes = np.array(slopes)
+
+    slope_deviation_radians = []
+    for slope in slopes:
+        slope_deviation_radians.append(calculate_angle_between_vectors(best_slope, slope))
+
+    slope_deviation_radians = np.array(slope_deviation_radians)
+
+    # scale_max = np.max([slope_deviation_radians])
+    # scale_min = np.min([slope_deviation_radians])
+    # Create a grid for contour plotting
+    grid_x, grid_y = np.meshgrid(
+        np.linspace(x_coords.min(), x_coords.max(), 500), np.linspace(y_coords.min(), y_coords.max(), 500)
+    )
+
+    # Interpolate errors onto the grid
+    error_grid = {
+        "Radian Difference": griddata((x_coords, y_coords), slope_deviation_radians, (grid_x, grid_y), method="linear")
+    }
+
+    # Plot each error type as a contour plot
+    fig, ax = plt.subplots(1, 1, figsize=(12, 10))
+    contour = ax.contourf(
+        grid_x, grid_y, error_grid["Radian Difference"], cmap="jet", levels=500  # , vmin=scale_min, vmax=scale_max
+    )
+    cbar = plt.colorbar(contour, ax=ax)
+    ax.set_title(f"Difference Heat Map ({set_label})")
+    ax.set_xlabel("X Pixel Location")
+    ax.set_ylabel("Y Pixel Location")
+    cbar.set_label("Radian Difference")
+    ax.invert_yaxis()
+
+    plt.tight_layout()
+    # plt.show()
+
+
+def ransac_average_direction(vectors, num_iterations=100, tolerance=0.00025):
     """
-    Writes data to a regular JSON file.
+    Compute a RANSAC-style average direction from a set of 3D vectors.
 
     Parameters:
-        data (dict or list): Data to write to the file.
-        file_path (str): Path to the .json file.
+        vectors (list or np.ndarray): Array of shape (N, 3) containing [x, y, z] direction components.
+        num_iterations (int): Number of RANSAC iterations to perform.
+        tolerance (float): Angular tolerance (in radians) for consensus evaluation.
 
     Returns:
-        None
+        np.ndarray: The "average" direction vector with the highest consensus.
     """
-    norm_path = os.path.normpath(file_path)
-    try:
-        with open(norm_path, 'w', encoding='utf-8') as f:
-            json.dump(data, f, indent=4, default=custom_serializer)
-        print(f"Data written to {norm_path}")
-    except Exception:
-        logger.error("write_json Error", exc_info=True)
+    # Ensure input is a NumPy array
+    vectors = np.array(vectors)
 
+    # Normalize all vectors to unit length
+    norms = np.linalg.norm(vectors, axis=1, keepdims=True)
+    normalized_vectors = vectors / norms
 
-def read_compressed_json(file_path):
-    """
-    Reads a compressed JSON file (.json.gz) and returns the data.
+    best_consensus_count = 0
+    best_average_direction = None
 
-    Parameters:
-        file_path (str): Path to the .json.gz file.
+    for _ in range(num_iterations):
+        # Randomly sample a subset of vectors
+        sample_indices = np.random.choice(
+            len(normalized_vectors), size=round(len(normalized_vectors) / 20), replace=False
+        )
+        sample_vectors = normalized_vectors[sample_indices]
 
-    Returns:
-        list: List of dictionaries containing the data from the file.
-    """
-    norm_path = os.path.normpath(file_path)
-    try:
-        with gzip.open(norm_path, 'rt', encoding='utf-8') as f:
-            data = json.load(f, object_hook=custom_deserializer)
-        return data
-    except Exception:
-        logger.error("read_compressed_json Error", exc_info=True)
-        return None
+        # Compute the average direction of the sample
+        average_direction = np.mean(sample_vectors, axis=0)
+        average_direction /= np.linalg.norm(average_direction)  # Normalize to unit length
 
+        # Compute angular distance between average direction and all vectors
+        dot_products = np.dot(normalized_vectors, average_direction)
+        angular_distances = np.arccos(np.clip(dot_products, -1.0, 1.0))  # Clip to avoid numerical issues
 
-def write_compressed_json(data, file_path, print_path=True):
-    """
-    Writes data to a compressed JSON file (.json.gz).
+        # Count how many vectors are within the tolerance
+        consensus_count = np.sum(angular_distances < tolerance)
 
-    Parameters:
-        data (dict or list): Data to write to the file.
-        file_path (str): Path to the .json.gz file.
+        # Update the best result if this iteration has higher consensus
+        if consensus_count > best_consensus_count:
+            best_consensus_count = consensus_count
+            best_average_direction = average_direction
 
-    Returns:
-        None
-    """
-    norm_path = os.path.normpath(file_path)
-    success = False
-    for i in range(10):
-        try:
-            with gzip.open(norm_path, 'wt', encoding='utf-8') as f:
-                try:
-                    json.dump(data, f, indent=4, default=custom_serializer)
-                    success = True
-                    break
-                except Exception:
-                    logger.error("write_compressed_json Error", exc_info=True)
-                    time.sleep(0.01)
-        except Exception:
-            logger.error("write_compressed_json Error", exc_info=True)
-
-    if success:
-        if print_path and i == 0:
-            logger.info("File Saved to %s", norm_path)
-        if i > 0:
-            logger.info("File saved to %s after %d attempts", norm_path, i)
+    return best_average_direction
 
 
 if __name__ == "__main__":
+    checkpoint_dir = "//snl/Collaborative/NSTTF_Optics/Projects/_Directories/NSTTF_Optics_LookbackExEx/Experiments/2025-06_05_NsttfTunedFacetScan1dof/3_Post/DSC_0025/0_checkpoints"
     json_data_location = "//snl/Collaborative/NSTTF_Optics/Projects/_Directories/NSTTF_Optics_LookbackExEx/Experiments/2025-06_05_NsttfTunedFacetScan1dof/3_Post/DSC_0025/8_pixel_vector_information/debug/pixel_vector_information_wslope_debug.json.gz"
     output_folder = "//snl/Collaborative/NSTTF_Optics/Projects/_Directories/NSTTF_Optics_LookbackExEx/Experiments/2025-06_05_NsttfTunedFacetScan1dof/3_Post/DSC_0025/9_sofast_data_compare"
     dark_mask_image = "//snl//Collaborative/NSTTF_Optics/Projects/_Directories/NSTTF_Optics_LookbackExEx/Experiments/2025-06_05_NsttfTunedFacetScan1dof/3_Post/DSC_0025/1_video_frames/DSC_0025-00001.png"
     light_mask_image = "//snl/Collaborative/NSTTF_Optics/Projects/_Directories/NSTTF_Optics_LookbackExEx/Experiments/2025-06_05_NsttfTunedFacetScan1dof/3_Post/DSC_0025/3_specific_cropped_frames\DSC_0025-23490.png"
+
     dark_mask = cv.imread(dark_mask_image)
     light_mask = cv.imread(light_mask_image)
     light_mask_gray = cv.cvtColor(light_mask, cv.COLOR_BGR2GRAY)
@@ -1015,7 +1063,7 @@ if __name__ == "__main__":
         forced_points=forced_transform_points,
     )
 
-    visualize_transform_matrix_changes(transform_matrix[0])
+    # visualize_transform_matrix_changes(transform_matrix[0])
 
     new_data = warp_mirror_pixels_and_data(
         compressed_json_path=json_data_location,
@@ -1025,5 +1073,7 @@ if __name__ == "__main__":
         target_points_for_warp=facet_corners,
     )
 
-    plot_error_contours(new_data)
+    # plot_error_contours(new_data)
+    plot_slope_heat_maps(new_data)
     plt.show()
+    print("done")

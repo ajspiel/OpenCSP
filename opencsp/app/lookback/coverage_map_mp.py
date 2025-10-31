@@ -1,20 +1,24 @@
 import os
-import time
+import gc
+from logging import DEBUG, ERROR
+from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 import imageio.v2 as imageio
 import rawpy  # Import rawpy for processing RAW image files
 from tqdm import tqdm
-from concurrent.futures import ThreadPoolExecutor
-import json
 
 # from opencsp.common.lib.tool.log_tools import multiprocessing_logger
 import opencsp.app.lookback.lookback_tools as lbt
-from logging import DEBUG, ERROR
 
 # Specify the folder where the log file should be saved
 logger = lbt.logging_setup(
-    log_folder=os.path.join(os.getcwd, "error_logs"), log_file_name="error_log_coverage_map_debug.txt", log_type=ERROR
+    log_folder=os.path.join(os.getcwd(), "error_logs"),
+    log_file_name="error_log_coverage_map_mp_debug.txt",
+    log_type=DEBUG,
 )
+
+# TODO Fix memory management issues. Within a batch, memory use slowly grows over time.
+# Batch size and thread max workers are currently trial and error to not overtax machine
 
 
 def process_image(image_file, threshold_fractions, max_intensity, is_raw):
@@ -49,69 +53,13 @@ def process_image(image_file, threshold_fractions, max_intensity, is_raw):
         binary_maps = {}
         for threshold_fraction in threshold_fractions:
             intensity_threshold = threshold_fraction * max_intensity
-            binary_maps[threshold_fraction] = (pixel_intensity > intensity_threshold).astype(np.uint8)
+            binary_maps[threshold_fraction] = (pixel_intensity > intensity_threshold).astype(bool)
 
         return binary_maps
 
     except Exception as e:
         logger.error("Error processing %s : %s", image_file, e, exc_info=True)
         return None
-
-
-def process_images_in_batches(
-    image_files, threshold_fractions, max_intensity, is_raw, batch_size, output_folder, prefix
-):
-    """
-    Processes images in batches to create binary maps for the given thresholds.
-
-    Parameters:
-        image_files (list of str): List of image file paths to process.
-        threshold_fractions (list of float): List of fractions of the maximum intensity value to use as thresholds.
-        max_intensity (float): Maximum possible intensity value for the image format.
-        is_raw (bool): Whether the images are RAW files.
-        batch_size (int): Number of images to process in each batch.
-        output_folder (str): Path to location for binary map output.
-        prefix (str): Prefix for output filenames.
-
-    Returns:
-        None
-    """
-    # Initialize binary maps for each threshold
-    first_image = imageio.imread(image_files[0]) if not is_raw else rawpy.imread(image_files[0]).postprocess()
-    binary_maps = {
-        threshold: np.zeros((first_image.shape[0], first_image.shape[1]), dtype=np.uint8)
-        for threshold in threshold_fractions
-    }
-
-    # Process images in batches
-    for batch_start in range(0, len(image_files), batch_size):
-        batch_end = min(batch_start + batch_size, len(image_files))
-        batch_files = image_files[batch_start:batch_end]
-
-        with ThreadPoolExecutor(max_workers=4) as executor:
-            futures = {
-                executor.submit(process_image, image_file, threshold_fractions, max_intensity, is_raw): image_file
-                for image_file in batch_files
-            }
-
-            # Initialize tqdm progress bar for the batch
-            with tqdm(
-                total=len(batch_files), desc=f"Processing Batch {batch_start // batch_size + 1}", unit="image"
-            ) as pbar:
-                for future in futures:
-                    result = future.result()
-                    if result:
-                        for threshold_fraction in threshold_fractions:
-                            binary_maps[threshold_fraction] = np.maximum(
-                                binary_maps[threshold_fraction], result[threshold_fraction]
-                            )
-                    pbar.update(1)
-
-    # Save binary maps for the batch
-    for threshold_fraction, binary_map in binary_maps.items():
-        output_path = os.path.join(output_folder, f"{prefix}_binary_map_{int(threshold_fraction * 100)}.png")
-        imageio.imwrite(output_path, binary_map * 255)  # Scale binary map to 0-255 for saving as an image
-        print(f"Binary map for threshold {threshold_fraction} saved to {output_path}")
 
 
 def compile_binary_maps(output_folder, threshold_fractions, prefix):
@@ -154,6 +102,66 @@ def compile_binary_maps(output_folder, threshold_fractions, prefix):
         output_path = os.path.join(output_folder, f"{prefix}_compiled_binary_map_{int(threshold_fraction * 100)}.png")
         imageio.imwrite(output_path, compiled_map * 255)  # Scale binary map to 0-255 for saving as an image
         print(f"Compiled binary map for threshold {threshold_fraction} saved to {output_path}")
+
+
+def process_images_in_batches(
+    image_files, threshold_fractions, max_intensity, is_raw, batch_num, output_folder, prefix
+):
+    """
+    Processes images in batches to create binary maps for the given thresholds.
+
+    Parameters:
+        image_files (list of str): List of image file paths to process.
+        threshold_fractions (list of float): List of fractions of the maximum intensity value to use as thresholds.
+        max_intensity (float): Maximum possible intensity value for the image format.
+        is_raw (bool): Whether the images are RAW files.
+        batch_num (int): Batch Number.
+        output_folder (str): Path to location for binary map output.
+        prefix (str): Prefix for output filenames.
+
+    Returns:
+        None
+    """
+    # Initialize binary maps for each threshold
+    first_image = imageio.imread(image_files[0]) if not is_raw else rawpy.imread(image_files[0]).postprocess()
+    binary_maps = {
+        threshold: np.zeros((first_image.shape[0], first_image.shape[1]), dtype=bool)
+        for threshold in threshold_fractions
+    }
+
+    # Process images in batches
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        futures = {
+            executor.submit(process_image, os.path.normpath(file), threshold_fractions, max_intensity, is_raw): file
+            for file in image_files
+        }
+
+        # Initialize tqdm progress bar for the batch
+        with tqdm(total=len(image_files), desc=f"Coverage Map Batch {batch_num}", unit="images") as pbar:
+            for future in futures:
+                try:
+                    result = future.result()
+                    if result:
+                        for threshold_fraction in threshold_fractions:
+                            binary_maps[threshold_fraction] = np.maximum(
+                                binary_maps[threshold_fraction], result[threshold_fraction]
+                            )
+                    pbar.update(1)
+                except Exception as e:
+                    logger.error("Error processing image: %s", e, exc_info=True)
+
+                # Explicitly release memory for the processed image and intermediate results
+                del result
+
+    # Save binary maps for the batch
+    for threshold_fraction, binary_map in binary_maps.items():
+        output_path = os.path.join(output_folder, f"{prefix}_binary_map_{int(threshold_fraction * 100)}.png")
+        imageio.imwrite(output_path, binary_map * 255)  # Scale binary map to 0-255 for saving as an image
+        print(f"Binary map for threshold {threshold_fraction} saved to {output_path}")
+
+    # Final memory cleanup after processing the batch
+    del binary_maps
+    gc.collect()  # Force garbage collection to free memory
 
 
 def construct_binary_maps_parallel(
@@ -224,7 +232,7 @@ def construct_binary_maps_parallel(
                 threshold_fractions,
                 max_intensity,
                 is_raw=False,
-                batch_size=batch_size,
+                batch_num=batch_start // batch_size + 1,
                 output_folder=output_folder,
                 prefix="traditional",
             )
@@ -265,7 +273,7 @@ def construct_binary_maps_parallel(
                 threshold_fractions,
                 max_intensity_raw,
                 is_raw=True,
-                batch_size=batch_size,
+                batch_num=batch_start // batch_size + 1,
                 output_folder=output_folder,
                 prefix="raw",
             )
@@ -281,26 +289,3 @@ def construct_binary_maps_parallel(
             compile_binary_maps(output_folder, threshold_fractions, prefix="raw")
             checkpoint_data["completed_thresholds"].append("raw")
             lbt.save_checkpoint(checkpoint_folder, checkpoint_file, checkpoint_data)
-
-
-# Example usage
-if __name__ == "__main__":
-    checkpoint_folder = "//snl/Collaborative/NSTTF_Optics/Projects/_Directories/NSTTF_Optics_LookbackExEx/Experiments/2025-06-14_NsttfHeliostatMoon/3_Post/DSC_2842/0_checkpoints"
-    checkpoint_file_name = "coverage_map_checkpoint.json"
-    image_folder = "//snl/Collaborative/NSTTF_Optics/Projects/_Directories/NSTTF_Optics_LookbackExEx/Experiments/2025-06-14_NsttfHeliostatMoon/3_Post/DSC_2842/3_specific_cropped_frames"  # Replace with the path to your image folder
-    output_folder = "//snl/Collaborative/NSTTF_Optics/Projects/_Directories/NSTTF_Optics_LookbackExEx/Experiments/2025-06-14_NsttfHeliostatMoon/3_Post/DSC_2842/4_coverage_map"
-    # image_folder = r"//snl/Collaborative/NSTTF_Optics/Projects/_Directories/NSTTF_Optics_LookbackExEx/Experiments/2025-06_05_NsttfTunedFacetScan1dof/3_Post/Nikon_CSOL_1_DSC2687_2826/1_video_frames"  # Replace with the path to your image folder
-    # output_folder = r"//snl/Collaborative/NSTTF_Optics/Projects/_Directories/NSTTF_Optics_LookbackExEx/Experiments/2025-06_05_NsttfTunedFacetScan1dof/3_Post/Nikon_CSOL_1_DSC2687_2826/4_coverage_map"
-
-    threshold_fractions = [0.01, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99]
-    batch_size = 1000  # Process 1000 images per batch
-
-    construct_binary_maps_parallel(
-        image_folder,
-        output_folder,
-        checkpoint_folder,
-        threshold_fractions,
-        batch_size=batch_size,
-        max_workers=4,
-        checkpoint_file=checkpoint_file_name,
-    )

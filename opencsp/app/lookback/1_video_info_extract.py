@@ -98,6 +98,8 @@ class LookBack_ExEx:
             r'6_time_history_output',
             r'7_pixel_timing_interrogation',
             r'8_pixel_vector_information',
+            r'9_sofast_data_compare',
+            r'reference_images',
         ]
         self.output_video_folders = None
         self.output_text = None

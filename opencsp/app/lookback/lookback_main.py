@@ -2,11 +2,15 @@ import os
 import time
 import numpy as np
 from logging import DEBUG, ERROR
+import cv2
 
+import opencsp.app.sofast.lib.image_processing as imgp
 import opencsp.app.lookback.lookback_tools as lbt
 import opencsp.app.lookback.coverage_map_mp as cvg_map
 import opencsp.app.lookback.time_history_array_mp as time_hist
 import opencsp.app.lookback.time_history_transitions_mp as transitions
+
+from opencsp.common.lib.camera.Camera import Camera
 
 # Specify the folder where the log file should be saved
 logger = lbt.logging_setup(
@@ -21,6 +25,20 @@ def main():
     video_name = "DSC_0025.MOV"
     checkpoint_folder = os.path.join(primary_folder, "0_checkpoints")
     checkpoint_main_name = "lookback_main_checkpoint.json"
+
+    light_image = cv2.imread(os.path.join(primary_folder, "light_mask_test.png"), cv2.IMREAD_GRAYSCALE)
+    dark_image = cv2.imread(os.path.join(primary_folder, "dark_mask_test.png"), cv2.IMREAD_GRAYSCALE)
+
+    mask_raw = imgp.calc_mask_raw(
+        np.concatenate((dark_image[:, :, np.newaxis], light_image[:, :, np.newaxis]), axis=2),
+        hist_thresh=0.5,
+        filt_width=9,
+        filt_thresh=4,
+        thresh_active_pixels=0.01,
+    )
+    mask = imgp.keep_largest_mask_area(mask_raw)
+    v_mask_centroid_image = imgp.centroid_mask(mask)
+    v_edges_image = imgp.edges_from_mask(mask)
 
     # Load checkpoint if it exists
     checkpoint_main_data = lbt.load_checkpoint(checkpoint_folder, checkpoint_main_name)
@@ -95,6 +113,7 @@ def main():
     if "pixel_transitions" in checkpoint_main_data["Completed_Steps"]:
         logger.info("Skipped Already Completed Transition History: %s", str(time.time() - start_time))
     else:
+        '''
         height_range = (435, 670)  # TODO Add pixels_of_interest selection to interactive section
         width_range = (830, 1070)
         pixels_of_interest = [
@@ -102,9 +121,10 @@ def main():
             for height in range(height_range[0], height_range[1])
             for width in range(width_range[0], width_range[1])
         ]
+        '''
         transitions.analyze_pixel_brightness_parallel_hdf5(
             hdf5_folder=os.path.join(primary_folder, "6_time_history_output", "50"),
-            pixel_locations=pixels_of_interest,
+            pixel_locations=mask,
             output_folder=os.path.join(primary_folder, "7_pixel_timing_interrogation"),
             final_output_file="time_history_transition_parallel_final.hdf5",
             checkpoint_folder=checkpoint_folder,

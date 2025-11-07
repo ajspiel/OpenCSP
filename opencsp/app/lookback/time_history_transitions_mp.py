@@ -1,4 +1,5 @@
 import os
+import re
 from logging import DEBUG, ERROR
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import numpy as np
@@ -35,11 +36,12 @@ def merge_hdf5_results(output_folder, final_output_file):
 
     # Merge results from all files
     for result_file in result_files:
-        batch_results = lbt.read_from_hdf5(result_file)
+        batch_results = lbt.read_hdf5_datasets(os.path.normpath(result_file))
         for pixel, transitions in batch_results.items():
             if pixel not in merged_results:
                 merged_results[pixel] = []
-            merged_results[pixel].extend(transitions)
+
+            merged_results[pixel].append(transitions)
 
     # Write merged results to the final output file
     lbt.save_hdf5_datasets_compressed(
@@ -104,6 +106,70 @@ def process_hdf5_file_within_batch(hdf5_file, pixel_locations):
     return pixel_results
 
 
+def process_hdf5_file_within_mask_batch(hdf5_file, pixel_mask):
+    """
+    Processes a single .hdf5 file to analyze pixel brightness transitions within the batch.
+
+    Parameters:
+        hdf5_file (str): Path to the .hdf5 file.
+        pixel_mask (np.ndarray): Binary mask indicating pixel locations to interrogate (same dimensions as image arrays).
+
+    Returns:
+        dict: Results for the pixel transitions within the batch.
+    """
+    head, tail = os.path.split(hdf5_file)
+    base, _ = os.path.splitext(tail)
+    datasets = lbt.read_json(os.path.join(head, base + ".json"))
+    # Read the .hdf5 file
+    data = lbt.read_hdf5_datasets(hdf5_file, datasets)
+
+    # Initialize a dictionary to store results for each pixel
+    pixel_results = {}  # Dictionary to store results for pixels with transitions
+
+    image_names = []
+    binary_arrays = []
+    for frame, array in data.items():
+        image_names.append(frame)
+        binary_arrays.append(array)
+
+    # Iterate over the images in the batch
+    for i in range(len(binary_arrays) - 1):  # Compare each image with the next one
+        current_image_name = image_names[i]
+        next_image_name = image_names[i + 1]
+
+        current_binary_array = np.array(binary_arrays[i])
+        next_binary_array = np.array(binary_arrays[i + 1])
+
+        # Compare pixel values between the current image and the next image
+        # Use the pixel mask to filter relevant pixels
+        for row in range(pixel_mask.shape[0]):
+            for col in range(pixel_mask.shape[1]):
+                if pixel_mask[row, col]:  # Only process pixels where the mask is True
+                    # Current and next pixel values
+                    current_pixel_value = current_binary_array[row, col]
+                    next_pixel_value = next_binary_array[row, col]
+
+                    # Bright transition (0 -> 1)
+                    if current_pixel_value == 0 and next_pixel_value == 1:
+                        pixel_key = f"{row},{col}"
+                        if pixel_key not in pixel_results:
+                            pixel_results[pixel_key] = []
+                        pixel_results[pixel_key].append(
+                            {"transition": "bright", "from_frame": current_image_name, "to_frame": next_image_name}
+                        )
+
+                    # Dark transition (1 -> 0)
+                    if current_pixel_value == 1 and next_pixel_value == 0:
+                        pixel_key = f"{row},{col}"
+                        if pixel_key not in pixel_results:
+                            pixel_results[pixel_key] = []
+                        pixel_results[pixel_key].append(
+                            {"transition": "dark", "from_frame": current_image_name, "to_frame": next_image_name}
+                        )
+
+    return pixel_results
+
+
 def analyze_pixel_brightness_parallel_hdf5(
     hdf5_folder, pixel_locations, output_folder, final_output_file, checkpoint_folder, checkpoint_file_name
 ):
@@ -112,7 +178,7 @@ def analyze_pixel_brightness_parallel_hdf5(
 
     Parameters:
         hdf5_folder (str): Path to the folder containing .hdf5 files.
-        pixel_locations (list of tuple): List of pixel locations to interrogate.
+        pixel_locations (list of tuple or numpy binary array mask): List of pixel locations to interrogate.
         output_folder (str): Path to the folder for intermediate results.
         final_output_file (str): Path to the final output .hdf5 file.
         checkpoint_folder (str): Path to the checkpoint file.
@@ -147,7 +213,7 @@ def analyze_pixel_brightness_parallel_hdf5(
                 print(f"Skipping already processed batch {batch_index+1}")
                 continue
 
-            futures.append(executor.submit(process_hdf5_file_within_batch, hdf5_file, pixel_locations))
+            futures.append(executor.submit(process_hdf5_file_within_mask_batch, hdf5_file, pixel_locations))
 
         # Use tqdm to track progress of futures
         for batch_index, future in enumerate(
@@ -213,19 +279,17 @@ def create_timing_plots_with_pillow_hdf5(
 
     # Load the compiled .npz file
     data = lbt.read_hdf5_datasets(compiled_hdf5)
+    unpacked_data = unpack_dict_data(data)
 
     # Create a tqdm progress bar outside the loop
-    progress_bar = tqdm(total=len(data.files), desc="Creating Timing Plots and Writing Data")
+    progress_bar = tqdm(total=len(unpacked_data), desc="Creating Timing Plots and Writing Data")
 
     # Iterate over each pixel in the compiled .npz data
-    for pixel in data.files:
+    for pixel, transitions in unpacked_data.items():
         if pixel in checkpoint_data["processed_pixels"]:
             print(f"Skipping already processed pixel {pixel}.")
             progress_bar.update(1)  # Update the progress bar even if skipping
             continue
-
-        # Get transitions for the current pixel
-        transitions = data[pixel].tolist()
 
         # Initialize a binary array for the pixel
         binary_state = {frame: 0 for frame in frames}  # Default to dark (0) for all frames
@@ -234,7 +298,7 @@ def create_timing_plots_with_pillow_hdf5(
         current_state = 0  # Start with dark (0)
         for frame in frames:
             # Check if there is a transition for the current frame
-            for transition in transitions:
+            for start_key, transition in transitions.items():
                 frame_index = lbt.frame_number_from_img_name(transition["to_frame"])  # Find the index of the frame
                 if frame_index == frame:
                     if transition["transition"] == "bright":
@@ -290,19 +354,22 @@ def create_timing_plots_with_pillow_hdf5(
         draw.text((width // 2 - margin, height - margin + 20), "Frame Number", fill="black", font=font)
 
         # Save the plot to the output folder
-        height, _ = eval(pixel)
-        if os.path.isdir(os.path.join(output_folder, str(height))):
-            plot_file = os.path.normpath(os.path.join(output_folder, str(height), f"pixel_{pixel}_timing_plot_PIL.jpg"))
+        row, col = re.split(r"_", pixel, maxsplit=1)
+        # height, _ = eval(pixel)
+        if os.path.isdir(os.path.join(output_folder, str(row))):
+            plot_file = os.path.normpath(os.path.join(output_folder, str(row), f"pixel_{pixel}_timing_plot_PIL.jpg"))
             img.save(plot_file)
             np.savez_compressed(
-                os.path.join(output_folder, str(height), f"pixel_{pixel}_timing_plot_data.npz"), **binary_state
+                os.path.normpath(os.path.join(output_folder, str(row), f"pixel_{pixel}_timing_plot_data.npz")),
+                binary_state,
             )
         else:
-            os.makedirs(os.path.join(output_folder, str(height)), exist_ok=True)
-            plot_file = os.path.normpath(os.path.join(output_folder, str(height), f"pixel_{pixel}_timing_plot_PIL.jpg"))
+            os.makedirs(os.path.join(output_folder, str(row)), exist_ok=True)
+            plot_file = os.path.normpath(os.path.join(output_folder, str(row), f"pixel_{pixel}_timing_plot_PIL.jpg"))
             img.save(plot_file)
             np.savez_compressed(
-                os.path.join(output_folder, str(height), f"pixel_{pixel}_timing_plot_data.npz"), **binary_state
+                os.path.normpath(os.path.join(output_folder, str(row), f"pixel_{pixel}_timing_plot_data.npz")),
+                binary_state,
             )
         # Update checkpoint
         checkpoint_data["processed_pixels"].append(pixel)
@@ -310,3 +377,24 @@ def create_timing_plots_with_pillow_hdf5(
         # Update the progress bar
         progress_bar.update(1)
     progress_bar.close()
+
+
+def unpack_dict_data(data_packet):
+    output_dict = {}
+    pixels = data_packet.keys()
+    try:
+        for pixel in pixels:
+            foo = data_packet[pixel]
+            temp_dict = {}
+            for _, batch_transitions in foo.items():
+                if isinstance(batch_transitions, dict):
+                    for _, transition in batch_transitions.items():
+                        frame_begin = lbt.frame_number_from_img_name(transition['from_frame'])
+                        temp_dict[frame_begin] = transition
+                else:
+                    return None
+                output_dict[pixel] = temp_dict
+
+        return output_dict
+    except Exception:
+        logger.error("Cannot Unpack data in this format", exc_info=True)

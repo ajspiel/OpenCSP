@@ -355,29 +355,49 @@ def read_batch_from_npz(input_path):
         return None
 
 
-def extract_video_metadata_exiftool(video_path):
+def extract_detailed_video_metadata(video_path):
     """
-    Extracts the media creation date, frame rate, and duration from a video file's metadata using exiftool.
+    Extracts detailed metadata from a video file using ExifTool, including general video metadata,
+    camera metadata, and date/time metadata.
 
     Parameters:
         video_path (str): Path to the video file.
 
     Returns:
-        dict: A dictionary containing:
-            - 'creation_date': Media creation date and time (if available).
-            - 'frame_rate': Frame rate of the video (frames per second, if available).
-            - 'duration': Duration of the video (seconds, if available).
+        dict: A dictionary containing metadata fields. Missing fields will have a value of None.
     """
     try:
-        # Run exiftool to extract metadata
+        # Run ExifTool to extract metadata
         result = subprocess.run(
             [
                 "exiftool",
-                "-CreateDate",
-                "-MediaCreateDate",
-                "-DateTimeOriginal",
-                "-VideoFrameRate",
+                "-FileName",
+                "-FileSize",
+                "-FileFormat",
                 "-Duration",
+                "-VideoFrameRate",
+                "-ImageWidth",
+                "-ImageHeight",
+                "-AspectRatio",
+                "-VideoBitrate",
+                "-Compression",
+                "-Make",
+                "-Model",
+                "-SerialNumber",
+                "-LensMake",
+                "-LensModel",
+                "-FocalLength",
+                "-Aperture",
+                "-ISO",
+                "-ShutterSpeed",
+                "-WhiteBalance",
+                "-ExposureMode",
+                "-MeteringMode",
+                "-FocusMode",
+                "-ImageStabilization",
+                "-CreateDate",
+                "-ModifyDate",
+                "-MediaCreateDate",
                 video_path,
             ],
             stdout=subprocess.PIPE,
@@ -385,20 +405,49 @@ def extract_video_metadata_exiftool(video_path):
             text=True,
         )
 
-        # Initialize metadata dictionary
-        metadata = {'creation_date': None, 'frame_rate': None, 'duration': None}
+        # Initialize metadata dictionary with all fields set to None
+        metadata = {
+            # General Video Metadata
+            'file_name': None,
+            'file_size': None,
+            'file_format': None,
+            'duration': None,
+            'frame_rate': None,
+            'resolution': None,
+            'aspect_ratio': None,
+            'bitrate': None,
+            'compression': None,
+            # Camera Metadata
+            'camera_make': None,
+            'camera_model': None,
+            'camera_serial_number': None,
+            'lens_make': None,
+            'lens_model': None,
+            'focal_length': None,
+            'aperture': None,
+            'iso': None,
+            'shutter_speed': None,
+            'white_balance': None,
+            'exposure_mode': None,
+            'metering_mode': None,
+            'focus_mode': None,
+            'image_stabilization': None,
+            # Date and Time Metadata
+            'create_date': None,
+            'modify_date': None,
+            'media_create_date': None,
+        }
 
-        # Parse the output to find relevant metadata
+        # Parse the output to populate the metadata dictionary
         for line in result.stdout.splitlines():
-            if "Create Date" in line or "Media Create Date" in line or "Date/Time Original" in line:
-                metadata['creation_date'] = line.split(": ", 1)[1].strip()
-            elif "Video Frame Rate" in line:
-                metadata['frame_rate'] = float(
-                    line.split(": ", 1)[1].strip().split(" ")[0]
-                )  # Extract frame rate as float
+            if "File Name" in line:
+                metadata['file_name'] = line.split(": ", 1)[1].strip()
+            elif "File Size" in line:
+                metadata['file_size'] = line.split(": ", 1)[1].strip()
+            elif "File Format" in line:
+                metadata['file_format'] = line.split(": ", 1)[1].strip()
             elif "Duration" in line:
                 duration_str = line.split(": ", 1)[1].strip()
-                # Convert duration to seconds (e.g., "0:01:23.456" -> 83.456 seconds)
                 parts = duration_str.split(":")
                 if len(parts) == 3:  # Format is hours:minutes:seconds
                     hours, minutes, seconds = map(float, parts)
@@ -406,10 +455,59 @@ def extract_video_metadata_exiftool(video_path):
                 elif len(parts) == 2:  # Format is minutes:seconds
                     minutes, seconds = map(float, parts)
                     metadata['duration'] = minutes * 60 + seconds
+            elif "Video Frame Rate" in line:
+                metadata['frame_rate'] = float(line.split(": ", 1)[1].strip().split(" ")[0])
+            elif "Image Width" in line:
+                width = int(line.split(": ", 1)[1].strip())
+                metadata['resolution'] = f"{width}x"  # Start resolution string
+            elif "Image Height" in line:
+                height = int(line.split(": ", 1)[1].strip())
+                if metadata['resolution']:
+                    metadata['resolution'] += f"{height}"  # Complete resolution string
+            elif "Aspect Ratio" in line:
+                metadata['aspect_ratio'] = line.split(": ", 1)[1].strip()
+            elif "Video Bitrate" in line:
+                metadata['bitrate'] = line.split(": ", 1)[1].strip()
+            elif "Compression" in line:
+                metadata['compression'] = line.split(": ", 1)[1].strip()
+            elif "Make" in line:
+                metadata['camera_make'] = line.split(": ", 1)[1].strip()
+            elif "Model" in line:
+                metadata['camera_model'] = line.split(": ", 1)[1].strip()
+            elif "Serial Number" in line:
+                metadata['camera_serial_number'] = line.split(": ", 1)[1].strip()
+            elif "Lens Make" in line:
+                metadata['lens_make'] = line.split(": ", 1)[1].strip()
+            elif "Lens Model" in line:
+                metadata['lens_model'] = line.split(": ", 1)[1].strip()
+            elif "Focal Length" in line:
+                metadata['focal_length'] = line.split(": ", 1)[1].strip()
+            elif "Aperture" in line:
+                metadata['aperture'] = line.split(": ", 1)[1].strip()
+            elif "ISO" in line:
+                metadata['iso'] = int(line.split(": ", 1)[1].strip())
+            elif "Shutter Speed" in line:
+                metadata['shutter_speed'] = line.split(": ", 1)[1].strip()
+            elif "White Balance" in line:
+                metadata['white_balance'] = line.split(": ", 1)[1].strip()
+            elif "Exposure Mode" in line:
+                metadata['exposure_mode'] = line.split(": ", 1)[1].strip()
+            elif "Metering Mode" in line:
+                metadata['metering_mode'] = line.split(": ", 1)[1].strip()
+            elif "Focus Mode" in line:
+                metadata['focus_mode'] = line.split(": ", 1)[1].strip()
+            elif "Image Stabilization" in line:
+                metadata['image_stabilization'] = line.split(": ", 1)[1].strip()
+            elif "Create Date" in line:
+                metadata['create_date'] = line.split(": ", 1)[1].strip()
+            elif "Modify Date" in line:
+                metadata['modify_date'] = line.split(": ", 1)[1].strip()
+            elif "Media Create Date" in line:
+                metadata['media_create_date'] = line.split(": ", 1)[1].strip()
 
         return metadata
     except Exception as e:
-        print(f"Error extracting metadata with exiftool: {e}")
+        print(f"Error extracting metadata with ExifTool: {e}")
         return None
 
 
@@ -533,33 +631,51 @@ def save_hdf5_datasets_compressed(
         compression (str): Compression algorithm to use (default: "gzip").
         compression_level (int): Compression level (default: 4).
     """
+
+    def sanitize_name(name):
+        return str(name).replace("(", "").replace(")", "").replace(",", "_").replace(" ", "_")
+
+    def save_dict_to_group(group, data):
+        for key, value in data.items():
+            sanitized_key = sanitize_name(key)
+            if isinstance(value, dict):
+                subgroup = group.create_group(sanitized_key)
+                save_dict_to_group(subgroup, value)
+            elif isinstance(value, (int, float, str)):
+                group.create_dataset(sanitized_key, data=value)
+            else:
+                group.create_dataset(
+                    sanitized_key, data=value, compression=compression, compression_opts=compression_level, chunks=True
+                )
+
     try:
         if isinstance(data, dict):
             with h5py.File(file, "w") as hf:
-                for pixel_coord, pixel_data in data.items():
-                    # Skip if the pixel data is an empty list
-                    if not pixel_data:
-                        continue
-
-                    # Create a group for each pixel coordinate
-                    group = hf.create_group(str(pixel_coord))  # Convert pixel coordinates to string for group name
-
-                    if isinstance(pixel_data, list) and all(isinstance(item, dict) for item in pixel_data):
-                        # Handle list of dictionaries
-                        for idx, dict_data in enumerate(pixel_data):
-                            # Create a subgroup for each dictionary in the list
-                            subgroup = group.create_group(
-                                f"entry_{idx}"
-                            )  # Create a unique subgroup name for each dictionary
-                            for dataset_name, dataset_value in dict_data.items():
-                                # Create datasets for each key-value pair in the dictionary
-                                subgroup.create_dataset(
-                                    dataset_name,
-                                    data=dataset_value,
-                                    compression=compression,
-                                    compression_opts=compression_level,
-                                    chunks=True,
-                                )
+                if isinstance(data, dict):
+                    for pixel_coord, pixel_data in data.items():
+                        if not pixel_data:
+                            continue
+                        group_name = sanitize_name(pixel_coord)
+                        group = hf.create_group(group_name)
+                        if isinstance(pixel_data, list) and all(isinstance(item, dict) for item in pixel_data):
+                            for idx, dict_data in enumerate(pixel_data):
+                                subgroup_name = f"entry_{idx}"
+                                subgroup = group.create_group(subgroup_name)
+                                save_dict_to_group(subgroup, dict_data)
+                        elif isinstance(pixel_data, dict):
+                            save_dict_to_group(group, pixel_data)
+                elif isinstance(data, list) and all(isinstance(item, dict) for item in data):
+                    for idx, dict_data in enumerate(data):
+                        group_name = f"group_{idx}"
+                        group = hf.create_group(group_name)
+                        save_dict_to_group(group, dict_data)
+                elif isinstance(data, list):
+                    for d, dataset in zip(data, datasets):
+                        if dataset in hf:
+                            del hf[dataset]
+                        hf.create_dataset(
+                            dataset, data=d, compression=compression, compression_opts=compression_level, chunks=True
+                        )
 
         elif isinstance(data, list) and all(isinstance(item, dict) for item in data):
             # Handle list of dictionaries
@@ -568,24 +684,33 @@ def save_hdf5_datasets_compressed(
                     group_name = f"group_{idx}"  # Create a unique group name for each dictionary
                     group = hf.create_group(group_name)
                     for dataset_name, dataset_value in dict_data.items():
-                        group.create_dataset(
-                            dataset_name,
-                            data=dataset_value,
-                            compression=compression,
-                            compression_opts=compression_level,
-                        )
+                        # Check if dataset_value is scalar or array-like
+                        if isinstance(dataset_value, (int, float, str)):
+                            # Handle scalar data
+                            group.create_dataset(dataset_name, data=dataset_value)
+                        else:
+                            # Handle array-like data
+                            group.create_dataset(
+                                dataset_name,
+                                data=dataset_value,
+                                compression=compression,
+                                compression_opts=compression_level,
+                            )
 
         elif isinstance(data, list):
-            with h5py.File(file, "a") as f:
+            with h5py.File(file, "a") as hf:
                 # Loop through datasets
                 for d, dataset in zip(data, datasets):
-                    if dataset in f:
+                    if dataset in hf:
                         # Delete dataset if it already exists
-                        del f[dataset]
+                        del hf[dataset]
                     # Write dataset with compression
-                    f.create_dataset(
+                    hf.create_dataset(
                         dataset, data=d, compression=compression, compression_opts=compression_level, chunks=True
                     )
+
+        hf.close()
+
     except Exception as e:
         logger.error("Error writing to hdf5 file %s", e, exc_info=True)
 
@@ -611,8 +736,14 @@ def read_hdf5_datasets(file: str, datasets: list = None):
                 # Recursively read nested groups
                 group_data[key] = read_group(item)
             else:
-                # Read dataset
-                group_data[key] = item[:]
+                # Check if dataset_value is scalar or array-like
+                if isinstance(item[()], (int, float, str)):
+                    group_data[key] = item[()]
+                elif isinstance(item[()], bytes):
+                    group_data[key] = item[()].decode('utf-8')
+                else:
+                    # Read dataset
+                    group_data[key] = item[:]
         return group_data
 
     data_dict = {}

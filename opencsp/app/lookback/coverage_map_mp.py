@@ -1,9 +1,12 @@
 import os
 import gc
-from logging import DEBUG, ERROR
+from logging import INFO
 from concurrent.futures import ThreadPoolExecutor
+
+# from concurrent.futures import ProcessPoolExecutor
 import numpy as np
 import imageio.v2 as imageio
+from PIL import Image
 import rawpy  # Import rawpy for processing RAW image files
 from tqdm import tqdm
 
@@ -14,7 +17,7 @@ import opencsp.app.lookback.lookback_tools as lbt
 logger = lbt.logging_setup(
     log_folder=os.path.join(os.getcwd(), "error_logs"),
     log_file_name="error_log_coverage_map_mp_debug.txt",
-    log_type=DEBUG,
+    log_type=INFO,
 )
 
 # TODO Fix memory management issues. Within a batch, memory use slowly grows over time.
@@ -125,9 +128,20 @@ def process_images_in_batches(
     # Initialize binary maps for each threshold
     first_image = imageio.imread(image_files[0]) if not is_raw else rawpy.imread(image_files[0]).postprocess()
     binary_maps = {
+        threshold: np.memmap(
+            os.path.join(output_folder, f"{prefix}_binary_map_{int(threshold * 100)}_{batch_num}.dat"),
+            dtype=bool,
+            mode="w+",
+            shape=(first_image.shape[0], first_image.shape[1]),
+        )
+        for threshold in threshold_fractions
+    }
+    '''
+    binary_maps = {
         threshold: np.zeros((first_image.shape[0], first_image.shape[1]), dtype=bool)
         for threshold in threshold_fractions
     }
+    '''
 
     # Process images in batches
     with ThreadPoolExecutor(max_workers=4) as executor:
@@ -155,13 +169,77 @@ def process_images_in_batches(
 
     # Save binary maps for the batch
     for threshold_fraction, binary_map in binary_maps.items():
-        output_path = os.path.join(output_folder, f"{prefix}_binary_map_{int(threshold_fraction * 100)}.png")
-        imageio.imwrite(output_path, binary_map * 255)  # Scale binary map to 0-255 for saving as an image
+        output_path = os.path.join(
+            output_folder, f"{prefix}_binary_map_{int(threshold_fraction * 100)}_{batch_num}.png"
+        )
+        bin_image = (binary_map * 255).astype('uint8')
+        image = Image.fromarray(bin_image)
+        image.save(output_path)
+        # imageio.imwrite(output_path, binary_map)
         print(f"Binary map for threshold {threshold_fraction} saved to {output_path}")
 
     # Final memory cleanup after processing the batch
-    del binary_maps
+    del binary_maps, image
     gc.collect()  # Force garbage collection to free memory
+
+
+def process_images_in_batches_pp(
+    image_files, threshold_fractions, max_intensity, is_raw, batch_num, output_folder, prefix
+):
+    """
+    Process images in batches using ProcessPoolExecutor.
+    """
+    # Initialize binary maps for each threshold
+    first_image = imageio.imread(image_files[0]) if not is_raw else rawpy.imread(image_files[0]).postprocess()
+    binary_maps = {
+        threshold: np.memmap(
+            f"{prefix}_binary_map_{int(threshold * 100)}_{batch_num}.dat",
+            dtype=bool,
+            mode="w+",
+            shape=(first_image.shape[0], first_image.shape[1]),
+        )
+        for threshold in threshold_fractions
+    }
+
+    # Process images in batches using ProcessPoolExecutor
+    with ProcessPoolExecutor(max_workers=4) as executor:
+        futures = {
+            executor.submit(process_image, os.path.normpath(file), threshold_fractions, max_intensity, is_raw): file
+            for file in image_files
+        }
+
+        # Initialize tqdm progress bar for the batch
+        with tqdm(total=len(image_files), desc=f"Coverage Map Batch {batch_num}", unit="images") as pbar:
+            for future in futures:
+                try:
+                    result = future.result()
+                    if result:
+                        for threshold_fraction in threshold_fractions:
+                            binary_maps[threshold_fraction] = np.maximum(
+                                binary_maps[threshold_fraction], result[threshold_fraction]
+                            )
+                    pbar.update(1)
+                except Exception as e:
+                    # Log error (replace with your logger)
+                    print(f"Error processing image: {e}")
+
+                # Explicitly release memory for the processed image and intermediate results
+                del result
+                gc.collect()
+
+    # Save binary maps for the batch
+    for threshold_fraction, binary_map in binary_maps.items():
+        output_path = os.path.join(
+            output_folder, f"{prefix}_binary_map_{int(threshold_fraction * 100)}_{batch_num}.png"
+        )
+        bin_image = (binary_map * 255).astype('uint8')
+        image = Image.fromarray(bin_image)
+        image.save(output_path)
+        print(f"Binary map for threshold {threshold_fraction} saved to {output_path}")
+
+    # Final memory cleanup after processing the batch
+    del binary_maps, image
+    gc.collect()
 
 
 def construct_binary_maps_parallel(

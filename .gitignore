@@ -34,3 +34,4 @@ opencsp/app/lookback/de430.bsp
 
 # Lookback Error Logs
 */error_logs
+error_logs/

@@ -21,7 +21,9 @@ import opencsp.common.lib.render_control.RenderControlAxis as rca
 import opencsp.common.lib.render_control.RenderControlPointSeq as rcps
 import opencsp.common.lib.render.View3d as v3d
 import opencsp.common.lib.render.view_spec as vs
+import opencsp.app.sofast.lib.spatial_processing as sp
 from opencsp.common.lib.geometry.Vxy import Vxy
+from opencsp.common.lib.geometry.Vxyz import Vxyz
 from opencsp.common.lib.geometry.Uxyz import Uxyz
 
 
@@ -578,11 +580,47 @@ def plot_heat_maps_radians(x_coords, y_coords, slopes, best_slope, set_label):
     # plt.show()
 
 
+def image_to_mirror_coords(pnp_rotation, pnp_translation, vector_data_updated):
+    new_pixel_locations = []
+    new_slope_1_mirror = []
+    new_slope_2_mirror = []
+    transform_cMo = 
+    for pixel, details in vector_data_updated.items():
+        row, col = ast.literal_eval(pixel)
+        if isinstance(details, dict):
+            if details["intersection_1"].size > 0:
+                slope_1 = vector_data_updated[pixel]["slope_1_camera_corrected"]
+                slope_2 = vector_data_updated[pixel]["slope_2_camera_corrected"]
+
+                # new_pix_loc = pnp_rotation.apply(np.array([col, row, 0])) + pnp_translation.data.reshape(3)
+                new_pix_loc = pnp_rotation.apply(np.array([col, row, 0]) - pnp_translation.data.reshape(3))
+                new_slope_1 = pnp_rotation.apply(np.array(slope_1))
+                new_slope_2 = pnp_rotation.apply(np.array(slope_2))
+            else:
+                # new_pix_loc = pnp_rotation.apply(np.array([col, row, 0])) + pnp_translation.data.reshape(3)
+                new_pix_loc = pnp_rotation.apply(np.array([col, row, 0]) - pnp_translation.data.reshape(3))
+                new_slope_1 = np.array([None, None, None])
+                new_slope_2 = np.array([None, None, None])
+        else:
+            # new_pix_loc = pnp_rotation.apply(np.array([col, row, 0])) + pnp_translation.data.reshape(3)
+            new_pix_loc = pnp_rotation.apply(np.array([col, row, 0]) - pnp_translation.data.reshape(3))
+            new_slope_1 = np.array([None, None, None])
+            new_slope_2 = np.array([None, None, None])
+
+        new_pixel_locations.append(new_pix_loc)
+        new_slope_1_mirror.append(new_slope_1)
+        new_slope_2_mirror.append(new_slope_2)
+
+    return np.array(new_pixel_locations), np.array(new_slope_1_mirror), np.array(new_slope_2_mirror)
+
+
 def main():
     primary_folder = "//snl/Collaborative/NSTTF_Optics/Projects/_Directories/NSTTF_Optics_LookbackExEx/Experiments/2025-06_05_NsttfTunedFacetScan1dof/3_Post/DSC_0025"
     video_name = "DSC_0025.MOV"
     checkpoint_folder = os.path.join(primary_folder, "0_checkpoints")
     checkpoint_main_name = "lookback_main_checkpoint.json"
+
+    plotting = True
 
     original_data_location = "//snl/Collaborative/NSTTF_Optics/Projects/_Directories/NSTTF_Optics_LookbackExEx/Experiments/2025-06_05_NsttfTunedFacetScan1dof/3_Post/DSC_0025_Final_ExEx/8_pixel_vector_information/debug/pixel_vector_information_wslope_debug.json.gz"
     vector_data = lbt.read_compressed_json(original_data_location)
@@ -610,6 +648,16 @@ def main():
         list(zip([860, 444], [840, 643], [1047, 657], [1062, 455])), dtype=int
     )  # Counterclockwise Starting from Bottom Left Corner in [row, column]
 
+    '''
+    
+    expected_corners_facet_coords_manual = Vxyz(
+        list(zip([-0.606, -0.606, 0], [-0.606, 0.606, 0], [0.606, 0.606, 0], [0.606, -0.606, 0])), dtype=float
+    )  # Counterclockwise Starting from Bottom Left Corner in [row, column]
+    '''
+    expected_corners_facet_coords_manual = Vxyz(
+        list(zip([0.606, -0.606, 0], [-0.606, -0.606, 0], [-0.606, 0.606, 0], [0.606, 0.606, 0])), dtype=float
+    )  # Counterclockwise Starting from Bottom Right Corner in [row, column] SOFAST Example uses this convention
+
     v_corners_image = imgp.refine_facet_corners(
         Puv_facet_corns_exp=expected_corners_manual,
         Puv_cent=v_mask_centroid_image,
@@ -618,6 +666,7 @@ def main():
         d_perp=20,
         frac_keep=1,
     )
+
     '''
     # Arbitrary Camera Intrinsic matrix
     K_intrin = np.array([[1, 0, 1920 / 2], [0, 1, 1080 / 2], [0, 0, 1]])
@@ -632,6 +681,10 @@ def main():
 
     cam = Camera(
         intrinsic_mat=K_intrin, distortion_coef=D_coeff, image_shape_xy=tuple[1920, 1080], name="Arbitrary_Example"
+    )
+
+    r_optic_cam_refine_1, v_cam_optic_cam_refine_1 = sp.calc_rt_from_img_pts(
+        pts_image=v_corners_image.vertices, pts_object=expected_corners_facet_coords_manual, camera=cam
     )
 
     pixel_pointing = imgp.calculate_active_pixels_vectors(mask=all_pixels, camera=cam)
@@ -695,168 +748,201 @@ def main():
 
     cam_horizon_transform = roll_control_obj * rot_obj_no_roll
 
-    fig = plt.figure()
-    ax = fig.add_subplot(111, projection='3d')
-    vectors_data = [
-        [0, 0, 0, cam_x_axis.x[0], cam_x_axis.y[0], cam_x_axis.z[0], "Cam X", "r"],
-        [0, 0, 0, cam_y_axis.x[0], cam_y_axis.y[0], cam_y_axis.z[0], "Cam Y", "g"],
-        [
-            0,
-            0,
-            0,
-            central_pixel_vector.x[0],
-            central_pixel_vector.y[0],
-            central_pixel_vector.z[0],
-            "Cam Z (Central Pixel Pointing)",
-            "b",
-        ],
-        [
-            0,
-            0,
-            0,
-            reference_vector_horizon.x[0],
-            reference_vector_horizon.y[0],
-            reference_vector_horizon.z[0],
-            "Horizon Reference",
-            "darkorange",
-        ],
-        [
-            0,
-            0,
-            0,
-            cam_xyz_t[0][0] * 0.75,
-            cam_xyz_t[0][1] * 0.75,
-            cam_xyz_t[0][2] * 0.75,
-            "Cam X Transformed",
-            "maroon",
-        ],
-        [0, 0, 0, cam_xyz_t[1][0] * 0.75, cam_xyz_t[1][1] * 0.75, cam_xyz_t[1][2] * 0.75, "Cam Y Transformed", "lime"],
-        [
-            0,
-            0,
-            0,
-            cam_xyz_t[2][0] * 0.75,
-            cam_xyz_t[2][1] * 0.75,
-            cam_xyz_t[2][2] * 0.75,
-            "Cam Z Transformed",
-            "midnightblue",
-        ],
-        [
-            0,
-            0,
-            0,
-            cam_xyz_tr[0][0] * 0.5,
-            cam_xyz_tr[0][1] * 0.5,
-            cam_xyz_tr[0][2] * 0.5,
-            "Cam X Transformed Roll",
-            "aqua",
-        ],
-        [
-            0,
-            0,
-            0,
-            cam_xyz_tr[1][0] * 0.5,
-            cam_xyz_tr[1][1] * 0.5,
-            cam_xyz_tr[1][2] * 0.5,
-            "Cam Y Transformed Roll",
-            "blueviolet",
-        ],
-        [
-            0,
-            0,
-            0,
-            cam_xyz_tr[2][0] * 0.5,
-            cam_xyz_tr[2][1] * 0.5,
-            cam_xyz_tr[2][2] * 0.5,
-            "Cam Z Transformed Roll",
-            "deeppink",
-        ],
-    ]
+    cam_mirror_transform = r_optic_cam_refine_1 * roll_control_obj * rot_obj_no_roll
 
-    for ox, oy, oz, dx, dy, dz, label, color in vectors_data:
-        # Plot the vector using quiver
-        ax.quiver(ox, oy, oz, dx, dy, dz, color=color, arrow_length_ratio=0.1, label=label)
+    if plotting:
+        fig = plt.figure()
+        ax = fig.add_subplot(111, projection='3d')
+        vectors_data = [
+            [0, 0, 0, cam_x_axis.x[0], cam_x_axis.y[0], cam_x_axis.z[0], "Cam X", "r"],
+            [0, 0, 0, cam_y_axis.x[0], cam_y_axis.y[0], cam_y_axis.z[0], "Cam Y", "g"],
+            [
+                0,
+                0,
+                0,
+                central_pixel_vector.x[0],
+                central_pixel_vector.y[0],
+                central_pixel_vector.z[0],
+                "Cam Z (Central Pixel Pointing)",
+                "b",
+            ],
+            [
+                0,
+                0,
+                0,
+                reference_vector_horizon.x[0],
+                reference_vector_horizon.y[0],
+                reference_vector_horizon.z[0],
+                "Horizon Reference",
+                "darkorange",
+            ],
+            [
+                0,
+                0,
+                0,
+                cam_xyz_t[0][0] * 0.75,
+                cam_xyz_t[0][1] * 0.75,
+                cam_xyz_t[0][2] * 0.75,
+                "Cam X Transformed",
+                "maroon",
+            ],
+            [
+                0,
+                0,
+                0,
+                cam_xyz_t[1][0] * 0.75,
+                cam_xyz_t[1][1] * 0.75,
+                cam_xyz_t[1][2] * 0.75,
+                "Cam Y Transformed",
+                "lime",
+            ],
+            [
+                0,
+                0,
+                0,
+                cam_xyz_t[2][0] * 0.75,
+                cam_xyz_t[2][1] * 0.75,
+                cam_xyz_t[2][2] * 0.75,
+                "Cam Z Transformed",
+                "midnightblue",
+            ],
+            [
+                0,
+                0,
+                0,
+                cam_xyz_tr[0][0] * 0.5,
+                cam_xyz_tr[0][1] * 0.5,
+                cam_xyz_tr[0][2] * 0.5,
+                "Cam X Transformed Roll",
+                "aqua",
+            ],
+            [
+                0,
+                0,
+                0,
+                cam_xyz_tr[1][0] * 0.5,
+                cam_xyz_tr[1][1] * 0.5,
+                cam_xyz_tr[1][2] * 0.5,
+                "Cam Y Transformed Roll",
+                "blueviolet",
+            ],
+            [
+                0,
+                0,
+                0,
+                cam_xyz_tr[2][0] * 0.5,
+                cam_xyz_tr[2][1] * 0.5,
+                cam_xyz_tr[2][2] * 0.5,
+                "Cam Z Transformed Roll",
+                "deeppink",
+            ],
+        ]
 
-    # fig_pyr = plt.figure()
-    # ax_pyr = fig_pyr.add_subplot(111, projection='3d')
-    pix_pyr_t = []
-    for index, vec in enumerate(pyramid_pixel_vectors):
-        if index == 0:
-            ax.quiver(
-                0,
-                0,
-                0,
-                vec.x * 1.15,
-                vec.y * 1.15,
-                vec.z * 1.15,
-                arrow_length_ratio=0.1,
-                color="olivedrab",
-                label="Untransformed Camera Vec Sample",
-            )
-            pix_pyr_t.append(cam_horizon_transform.apply(vec.data.reshape(3)))
-            ax.quiver(
-                0,
-                0,
-                0,
-                pix_pyr_t[index][0] * 1.15,
-                pix_pyr_t[index][1] * 1.15,
-                pix_pyr_t[index][2] * 1.15,
-                arrow_length_ratio=0.1,
-                color="black",
-                label="Transformed Camera Vec Sample",
-            )
-        else:
-            ax.quiver(
-                0, 0, 0, vec.x * 1.15, vec.y * 1.15, vec.z * 1.15, arrow_length_ratio=0.1, color="olivedrab", label=None
-            )
-            pix_pyr_t.append(cam_horizon_transform.apply(vec.data.reshape(3)))
-            ax.quiver(
-                0,
-                0,
-                0,
-                pix_pyr_t[index][0] * 1.15,
-                pix_pyr_t[index][1] * 1.15,
-                pix_pyr_t[index][2] * 1.15,
-                arrow_length_ratio=0.1,
-                color="black",
-                label=None,
-            )
+        for ox, oy, oz, dx, dy, dz, label, color in vectors_data:
+            # Plot the vector using quiver
+            ax.quiver(ox, oy, oz, dx, dy, dz, color=color, arrow_length_ratio=0.1, label=label)
 
-    ax.set_xlabel('X-axis')
-    ax.set_ylabel('Y-axis')
-    ax.set_zlabel('Z-axis')
-    ax.set_xlim([-1.25, 1.25])
-    ax.set_ylim([-1.25, 1.25])
-    ax.set_zlim([-1.25, 1.25])
-    ax.set_aspect('equal')
-    ax.legend()
-
-    for pixel, details in vector_data.items():
-        if isinstance(details, dict):
-            if details["intersection_1"].size > 0:
-                row, col = ast.literal_eval(pixel)
-                cam_vec = get_pixel_pointing_vector(
-                    pixel_directions=pixel_pointing, row=row, col=col, imagewidth=mask.shape[1]
+        # fig_pyr = plt.figure()
+        # ax_pyr = fig_pyr.add_subplot(111, projection='3d')
+        pix_pyr_t = []
+        for index, vec in enumerate(pyramid_pixel_vectors):
+            if index == 0:
+                ax.quiver(
+                    0,
+                    0,
+                    0,
+                    vec.x * 1.15,
+                    vec.y * 1.15,
+                    vec.z * 1.15,
+                    arrow_length_ratio=0.1,
+                    color="olivedrab",
+                    label="Untransformed Camera Vec Sample",
                 )
-                _, slope_1_corr, slope_2_corr = safe_calculate_slope(
-                    cam_vec.reshape(3), cam_vec.reshape(3), details["intersection_1"], details["intersection_2"]
+                pix_pyr_t.append(cam_horizon_transform.apply(vec.data.reshape(3)))
+                ax.quiver(
+                    0,
+                    0,
+                    0,
+                    pix_pyr_t[index][0] * 1.15,
+                    pix_pyr_t[index][1] * 1.15,
+                    pix_pyr_t[index][2] * 1.15,
+                    arrow_length_ratio=0.1,
+                    color="black",
+                    label="Transformed Camera Vec Sample",
                 )
-                angle_between = calculate_angle_between_vectors(
-                    details['start_vector']['celestial_to_target'], details['end_vector']['celestial_to_target']
-                )
-                vector_data[pixel]["angle_between"] = angle_between
-                vector_data[pixel]["observer_vector_camera_corrected"] = cam_vec
-                vector_data[pixel]["slope_1_camera_corrected"] = slope_1_corr
-                vector_data[pixel]["slope_2_camera_corrected"] = slope_2_corr
             else:
-                continue
-        else:
-            pass
+                ax.quiver(
+                    0,
+                    0,
+                    0,
+                    vec.x * 1.15,
+                    vec.y * 1.15,
+                    vec.z * 1.15,
+                    arrow_length_ratio=0.1,
+                    color="olivedrab",
+                    label=None,
+                )
+                pix_pyr_t.append(cam_horizon_transform.apply(vec.data.reshape(3)))
+                ax.quiver(
+                    0,
+                    0,
+                    0,
+                    pix_pyr_t[index][0] * 1.15,
+                    pix_pyr_t[index][1] * 1.15,
+                    pix_pyr_t[index][2] * 1.15,
+                    arrow_length_ratio=0.1,
+                    color="black",
+                    label=None,
+                )
 
-    plot_slope_heat_maps(data_dict=vector_data)
-    plot_slope_heat_maps_updated(data_dict=vector_data)
-    plt.show()
-    print("done")
+        ax.set_xlabel('X-axis')
+        ax.set_ylabel('Y-axis')
+        ax.set_zlabel('Z-axis')
+        ax.set_xlim([-1.25, 1.25])
+        ax.set_ylim([-1.25, 1.25])
+        ax.set_zlim([-1.25, 1.25])
+        ax.set_aspect('equal')
+        ax.legend()
+
+        for pixel, details in vector_data.items():
+            if isinstance(details, dict):
+                if details["intersection_1"].size > 0:
+                    row, col = ast.literal_eval(pixel)
+                    cam_vec_original = get_pixel_pointing_vector(
+                        pixel_directions=pixel_pointing, row=row, col=col, imagewidth=mask.shape[1]
+                    )
+                    cam_vec_horizon = cam_horizon_transform.apply(cam_vec_original.reshape(3))
+                    _, slope_1_corr, slope_2_corr = safe_calculate_slope(
+                        cam_vec_horizon.reshape(3),
+                        cam_vec_horizon.reshape(3),
+                        details["intersection_1"],
+                        details["intersection_2"],
+                    )
+                    angle_between = calculate_angle_between_vectors(
+                        details['start_vector']['celestial_to_target'], details['end_vector']['celestial_to_target']
+                    )
+                    vector_data[pixel]["angle_between"] = angle_between
+                    vector_data[pixel]["observer_vector_camera_corrected"] = cam_vec_horizon
+                    vector_data[pixel]["slope_1_camera_corrected"] = slope_1_corr
+                    vector_data[pixel]["slope_2_camera_corrected"] = slope_2_corr
+                else:
+                    continue
+            else:
+                pass
+
+        mirror_pixel_coords, mirror_slope_1, mirror_slope_2 = image_to_mirror_coords(
+            r_optic_cam_refine_1.inv(), v_cam_optic_cam_refine_1, vector_data
+        )
+        fig = plt.figure()
+        ax = fig.add_subplot(111, projection='3d')
+        ax.scatter3D(mirror_pixel_coords[..., 0], mirror_pixel_coords[..., 1], mirror_pixel_coords[..., 2])
+        ax.set_xlabel("x")
+        ax.set_ylabel("y")
+        ax.set_zlabel("z")
+        plot_slope_heat_maps(data_dict=vector_data)
+        plot_slope_heat_maps_updated(data_dict=vector_data)
+        plt.show()
+        print("done")
 
 
 if __name__ == "__main__":

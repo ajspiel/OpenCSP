@@ -378,7 +378,7 @@ def plot_slope_heat_maps(data_dict):
     plot_heat_maps_radians(x_coords_set, y_coords_set, slope_set2, best_slope_2, "Set 2 Radians")
 
 
-def plot_slope_heat_maps_updated(data_dict):
+def plot_slope_heat_maps_horizonal(data_dict):
     """
     Iterates through a dictionary with pixel coordinates as keys, extracts up to two sets of data,
     and plots contour plots for each set separately.
@@ -403,14 +403,14 @@ def plot_slope_heat_maps_updated(data_dict):
         if isinstance(data, dict):  # Check if the value is a sub-dictionary
             if data["intersection_1"].size > 0:
                 # Extract the first set of data
-                if data["slope_1_camera_corrected"].size < 3 or data["slope_2_camera_corrected"].size < 3:
+                if data["H_slope_1_camera_corrected"].size < 3 or data["H_slope_2_camera_corrected"].size < 3:
                     continue
-                elif len(data["slope_1_camera_corrected"]) > 0:
+                elif len(data["H_slope_1_camera_corrected"]) > 0:
                     row, col = ast.literal_eval(pixel)
                     x_coords_set.append(col)
                     y_coords_set.append(row)
-                    slope_set1.append(data["slope_1_camera_corrected"])
-                    slope_set2.append(data["slope_2_camera_corrected"])
+                    slope_set1.append(data["H_slope_1_camera_corrected"])
+                    slope_set2.append(data["H_slope_2_camera_corrected"])
                     angle_between.append(data["angle_between"])
             else:
                 continue
@@ -422,19 +422,137 @@ def plot_slope_heat_maps_updated(data_dict):
     best_slope_1 = ransac_average_direction(np.array(slope_set1))
     best_slope_2 = ransac_average_direction(np.array(slope_set2))
 
-    plot_angle_between_vectors(x_coords_set, y_coords_set, angle_between)
+    # plot_angle_between_vectors(x_coords_set, y_coords_set, angle_between)
 
-    plot_heat_maps_no_comparison(x_coords_set, y_coords_set, slope_set1, "Set 1 Updated")
+    plot_heat_maps_no_comparison(x_coords_set, y_coords_set, slope_set1, "Set 1 Horizonal")
 
-    plot_heat_maps_no_comparison(x_coords_set, y_coords_set, slope_set2, "Set 2 Updated")
+    plot_heat_maps_no_comparison(x_coords_set, y_coords_set, slope_set2, "Set 2 Horizonal")
 
-    plot_heat_maps(x_coords_set, y_coords_set, slope_set1, best_slope_1, "Set 1 Updated")
+    plot_heat_maps(x_coords_set, y_coords_set, slope_set1, best_slope_1, "Set 1 Horizonal")
 
-    plot_heat_maps(x_coords_set, y_coords_set, slope_set2, best_slope_2, "Set 2 Updated")
+    plot_heat_maps(x_coords_set, y_coords_set, slope_set2, best_slope_2, "Set 2 Horizonal")
 
-    plot_heat_maps_radians(x_coords_set, y_coords_set, slope_set1, best_slope_1, "Set 1 Updated Radians")
+    # plot_heat_maps_radians(x_coords_set, y_coords_set, slope_set1, best_slope_1, "Set 1 Horizonal Radians")
 
-    plot_heat_maps_radians(x_coords_set, y_coords_set, slope_set2, best_slope_2, "Set 2 Updated Radians")
+    # plot_heat_maps_radians(x_coords_set, y_coords_set, slope_set2, best_slope_2, "Set 2 Horizonal Radians")
+
+
+def plot_slope_heat_maps_camera(data_dict):
+    """
+    Iterates through a dictionary with pixel coordinates as keys, extracts up to two sets of data,
+    and plots contour plots for each set separately.
+
+    Parameters:
+        pixel_dict (dict): A dictionary where:
+            - Keys are pixel coordinates (tuples) like (x, y).
+            - Values are either:
+                - Sub-dictionaries containing:
+                    - "slope_1" or "slope_2": List of up to two sets of [nx, ny, nz].
+                    - "angle_between": Float of angle between start and end vector.
+                - Empty ndarray for pixels without data.
+
+    Returns:
+        None: Displays the contour plots for both sets of data.
+    """
+    # Initialize lists to store data for the first and second sets
+    x_coords_set, y_coords_set, slope_set1, slope_set2, angle_between = [], [], [], [], []
+
+    # Iterate through the dictionary
+    for pixel, data in data_dict.items():
+        if isinstance(data, dict):  # Check if the value is a sub-dictionary
+            if data["intersection_1"].size > 0:
+                # Extract the first set of data
+                if data["C_slope_1_camera_corrected"].size < 3 or data["C_slope_2_camera_corrected"].size < 3:
+                    continue
+                elif len(data["C_slope_1_camera_corrected"]) > 0:
+                    row, col = ast.literal_eval(pixel)
+                    x_coords_set.append(col)
+                    y_coords_set.append(row)
+                    slope_set1.append(data["C_slope_1_camera_corrected"])
+                    slope_set2.append(data["C_slope_2_camera_corrected"])
+                    angle_between.append(data["angle_between"])
+            else:
+                continue
+        elif isinstance(data, np.ndarray) and len(data) == 0:  # Skip empty lists
+            continue
+        else:
+            raise ValueError(f"Unexpected data format for pixel {pixel}: {data}")
+
+    best_slope_1 = ransac_average_direction(np.array(slope_set1))
+    best_slope_2 = ransac_average_direction(np.array(slope_set2))
+
+    # plot_angle_between_vectors(x_coords_set, y_coords_set, angle_between)
+
+    plot_heat_maps_no_comparison(x_coords_set, y_coords_set, slope_set1, "Set 1 Camera")
+
+    plot_heat_maps_no_comparison(x_coords_set, y_coords_set, slope_set2, "Set 2 Camera")
+
+    plot_heat_maps(x_coords_set, y_coords_set, slope_set1, best_slope_1, "Set 1 Camera")
+
+    plot_heat_maps(x_coords_set, y_coords_set, slope_set2, best_slope_2, "Set 2 Camera")
+
+    # plot_heat_maps_radians(x_coords_set, y_coords_set, slope_set1, best_slope_1, "Set 1 Camera Radians")
+
+    # plot_heat_maps_radians(x_coords_set, y_coords_set, slope_set2, best_slope_2, "Set 2 Camera Radians")
+
+
+def plot_slope_heat_maps_mirror(data_dict):
+    """
+    Iterates through a dictionary with pixel coordinates as keys, extracts up to two sets of data,
+    and plots contour plots for each set separately.
+
+    Parameters:
+        pixel_dict (dict): A dictionary where:
+            - Keys are pixel coordinates (tuples) like (x, y).
+            - Values are either:
+                - Sub-dictionaries containing:
+                    - "slope_1" or "slope_2": List of up to two sets of [nx, ny, nz].
+                    - "angle_between": Float of angle between start and end vector.
+                - Empty ndarray for pixels without data.
+
+    Returns:
+        None: Displays the contour plots for both sets of data.
+    """
+    # Initialize lists to store data for the first and second sets
+    x_coords_set, y_coords_set, slope_set1, slope_set2, angle_between = [], [], [], [], []
+
+    # Iterate through the dictionary
+    for pixel, data in data_dict.items():
+        if isinstance(data, dict):  # Check if the value is a sub-dictionary
+            if data["intersection_1"].size > 0:
+                # Extract the first set of data
+                if data["M_slope_1_camera_corrected"].size < 3 or data["M_slope_2_camera_corrected"].size < 3:
+                    continue
+                elif len(data["M_slope_1_camera_corrected"]) > 0:
+                    row, col = ast.literal_eval(pixel)
+                    x_coords_set.append(col)
+                    y_coords_set.append(row)
+                    slope_set1.append(data["M_slope_1_camera_corrected"])
+                    slope_set2.append(data["M_slope_2_camera_corrected"])
+                    angle_between.append(data["angle_between"])
+            else:
+                continue
+        elif isinstance(data, np.ndarray) and len(data) == 0:  # Skip empty lists
+            continue
+        else:
+            raise ValueError(f"Unexpected data format for pixel {pixel}: {data}")
+
+    best_slope_1 = ransac_average_direction(np.array(slope_set1))
+    best_slope_2 = ransac_average_direction(np.array(slope_set2))
+
+    # plot_angle_between_vectors(x_coords_set, y_coords_set, angle_between)
+
+    plot_heat_maps_no_comparison(x_coords_set, y_coords_set, slope_set1, "Set 1 Mirror")
+
+    plot_heat_maps_no_comparison(x_coords_set, y_coords_set, slope_set2, "Set 2 Mirror")
+
+    plot_heat_maps(x_coords_set, y_coords_set, slope_set1, best_slope_1, "Set 1 Mirror")
+
+    plot_heat_maps(x_coords_set, y_coords_set, slope_set2, best_slope_2, "Set 2 Mirror")
+
+    # plot_heat_maps_radians(x_coords_set, y_coords_set, slope_set1, best_slope_1, "Set 1 Mirror Radians")
+
+    # plot_heat_maps_radians(x_coords_set, y_coords_set, slope_set2, best_slope_2, "Set 2 Mirror Radians")
 
 
 def plot_angle_between_vectors(x_coords, y_coords, angles_between):
@@ -464,8 +582,8 @@ def plot_heat_maps_no_comparison(x_coords, y_coords, slopes, set_label):
     y_coords = np.array(y_coords)
     slopes = np.array(slopes)
 
-    # scale_max = np.max([slope_diff_norms])
-    # scale_min = np.min([slope_diff_norms])
+    # scale_max = np.max([slopes])
+    # scale_min = np.min([slopes])
     # Create a grid for contour plotting
     grid_x, grid_y = np.meshgrid(
         np.linspace(x_coords.min(), x_coords.max(), 500), np.linspace(y_coords.min(), y_coords.max(), 500)
@@ -483,9 +601,9 @@ def plot_heat_maps_no_comparison(x_coords, y_coords, slopes, set_label):
     error_types = ["X Value", "Y Value", "Z Value"]
     for ax, error_type in zip(axes.flat, error_types):
         contour = ax.contourf(
-            grid_x, grid_y, error_grid[error_type], cmap="jet", levels=500  # , vmin=scale_min, vmax=scale_max
+            grid_x, grid_y, error_grid[error_type], cmap="jet", levels=250  # , vmin=scale_min, vmax=scale_max
         )
-        ax.scatter(x_coords, y_coords, s=0.1, c='k', marker='.')  # Actual locations where we have data
+        # ax.scatter(x_coords, y_coords, s=0.1, c='k', marker='.')  # Actual locations where we have data
         cbar = plt.colorbar(contour, ax=ax)
         ax.set_title(f"{error_type} Heat Map ({set_label})")
         ax.set_xlabel("X Pixel Location")
@@ -580,11 +698,11 @@ def plot_heat_maps_radians(x_coords, y_coords, slopes, best_slope, set_label):
     # plt.show()
 
 
-def image_to_mirror_coords(pnp_rotation, pnp_translation, vector_data_updated):
+def image_to_mirror_coords(rotation_obj, translation_obj, vector_data_updated):
     new_pixel_locations = []
     new_slope_1_mirror = []
     new_slope_2_mirror = []
-    transform_cMo = 
+    # transform_cMo =
     for pixel, details in vector_data_updated.items():
         row, col = ast.literal_eval(pixel)
         if isinstance(details, dict):
@@ -593,17 +711,17 @@ def image_to_mirror_coords(pnp_rotation, pnp_translation, vector_data_updated):
                 slope_2 = vector_data_updated[pixel]["slope_2_camera_corrected"]
 
                 # new_pix_loc = pnp_rotation.apply(np.array([col, row, 0])) + pnp_translation.data.reshape(3)
-                new_pix_loc = pnp_rotation.apply(np.array([col, row, 0]) - pnp_translation.data.reshape(3))
-                new_slope_1 = pnp_rotation.apply(np.array(slope_1))
-                new_slope_2 = pnp_rotation.apply(np.array(slope_2))
+                new_pix_loc = rotation_obj.apply(np.array([col, row, 0]) - translation_obj.data.reshape(3))
+                new_slope_1 = rotation_obj.apply(np.array(slope_1))
+                new_slope_2 = rotation_obj.apply(np.array(slope_2))
             else:
                 # new_pix_loc = pnp_rotation.apply(np.array([col, row, 0])) + pnp_translation.data.reshape(3)
-                new_pix_loc = pnp_rotation.apply(np.array([col, row, 0]) - pnp_translation.data.reshape(3))
+                new_pix_loc = rotation_obj.apply(np.array([col, row, 0]) - translation_obj.data.reshape(3))
                 new_slope_1 = np.array([None, None, None])
                 new_slope_2 = np.array([None, None, None])
         else:
             # new_pix_loc = pnp_rotation.apply(np.array([col, row, 0])) + pnp_translation.data.reshape(3)
-            new_pix_loc = pnp_rotation.apply(np.array([col, row, 0]) - pnp_translation.data.reshape(3))
+            new_pix_loc = rotation_obj.apply(np.array([col, row, 0]) - translation_obj.data.reshape(3))
             new_slope_1 = np.array([None, None, None])
             new_slope_2 = np.array([None, None, None])
 
@@ -655,9 +773,17 @@ def main():
     )  # Counterclockwise Starting from Bottom Left Corner in [row, column]
     '''
     expected_corners_facet_coords_manual = Vxyz(
-        list(zip([0.606, -0.606, 0], [-0.606, -0.606, 0], [-0.606, 0.606, 0], [0.606, 0.606, 0])), dtype=float
-    )  # Counterclockwise Starting from Bottom Right Corner in [row, column] SOFAST Example uses this convention
-
+        list(zip([0.606, 0.606, 0], [-0.606, 0.606, 0], [-0.606, -0.606, 0], [0.606, -0.606, 0])), dtype=float
+    )  # Counterclockwise Starting from Top Right Corner in [row, column] SOFAST Example uses this convention
+    homography_points = np.array(
+        [
+            [1060, 640],  # Top-right corner
+            [860, 640],  # Top-left corner
+            [860, 440],  # Bottom-left corner
+            [1060, 440],  # Bottom-right corner
+        ],
+        dtype=np.float32,
+    )
     v_corners_image = imgp.refine_facet_corners(
         Puv_facet_corns_exp=expected_corners_manual,
         Puv_cent=v_mask_centroid_image,
@@ -686,6 +812,29 @@ def main():
     r_optic_cam_refine_1, v_cam_optic_cam_refine_1 = sp.calc_rt_from_img_pts(
         pts_image=v_corners_image.vertices, pts_object=expected_corners_facet_coords_manual, camera=cam
     )
+    perspective_matrix = cv2.findHomography(
+        srcPoints=v_corners_image.vertices.data.T.astype(np.float32), dstPoints=homography_points
+    )
+    warped_image = cv2.warpPerspective(mask_image, perspective_matrix[0], (1920, 1080))
+    # cv2.imshow("Original", mask_image)
+    # cv2.imshow("Warped", warped_image)
+    '''
+    ret, rvec, tvec = cv2.solvePnP(
+        expected_corners_facet_coords_manual.data.T,
+        v_corners_image.vertices.data.T,
+        cam.intrinsic_mat,
+        cam.distortion_coef,
+    )
+    # r_optic_cam_refine_1, v_cam_optic_cam_refine_1 = sp.calc_rt_from_img_pts(
+    #     pts_image=v_corners_image.vertices, pts_object=expected_corners_facet_coords_manual, camera=cam
+    # )
+    R, _ = cv2.Rodrigues(rvec)
+    R_inv = R.T
+    t_inv = -R_inv @ tvec
+    Rt = np.hstack((cv2.Rodrigues(rvec)[0], tvec))
+
+    undistorted_point_norm = cv2.undistortPoints(expected_corners_manual.data.T, cam.intrinsic_mat, cam.distortion_coef, P=cam.intrinsic_mat)
+    '''
 
     pixel_pointing = imgp.calculate_active_pixels_vectors(mask=all_pixels, camera=cam)
 
@@ -708,7 +857,10 @@ def main():
     cam_y_axis = Uxyz(np.array([0, 1, 0]))
 
     reference_vector_horizon = Uxyz(vector_data["(500, 900)"]["observer_vector"] * -1)
-
+    reference_vector_horizon_camera = Uxyz(
+        [reference_vector_horizon.x[0], reference_vector_horizon.z[0] * -1, reference_vector_horizon.y[0]]
+    )
+    reference_vector_horizon_cad = Uxyz(np.array([70.030, 43.086, -51.518]))
     rot_obj_no_roll, rssd = rotation_matrix_scipy(
         np.array([central_pixel_vector.x[0], central_pixel_vector.y[0], central_pixel_vector.z[0]]),
         np.array([reference_vector_horizon.x[0], reference_vector_horizon.y[0], reference_vector_horizon.z[0]]),
@@ -716,7 +868,7 @@ def main():
 
     cam_xyz_t = rot_obj_no_roll.apply(
         np.array([cam_x_axis.data, cam_y_axis.data, central_pixel_vector.data]).reshape(3, 3)
-    )
+    )  # The original camera vector that corresponded to the horizonal reference vectors are aligned.
 
     test_vectors = np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1], [1, 1, 1]])
     test_output_x = []
@@ -744,18 +896,20 @@ def main():
 
     roll_control_obj = create_rotation_object(axis=cam_xyz_t[2], angle_degrees=roll_control_angle)
 
+    # The rotation to align the transformed camera-to-horizonal axis vectors such that direction of the x component transformed camera-to-horizonal set has a minimized z component.
+    # i.e. The x component of that vector (now in the horizonal coordinate system) must lie in the plane created by the X and Y horizonal vectors (East-West and North South)
     cam_xyz_tr = roll_control_obj.apply(cam_xyz_t)
 
     cam_horizon_transform = roll_control_obj * rot_obj_no_roll
 
-    cam_mirror_transform = r_optic_cam_refine_1 * roll_control_obj * rot_obj_no_roll
+    cam_mirror_transform = roll_control_obj * rot_obj_no_roll * r_optic_cam_refine_1  # I need to revisit this...
 
     if plotting:
         fig = plt.figure()
         ax = fig.add_subplot(111, projection='3d')
         vectors_data = [
-            [0, 0, 0, cam_x_axis.x[0], cam_x_axis.y[0], cam_x_axis.z[0], "Cam X", "r"],
-            [0, 0, 0, cam_y_axis.x[0], cam_y_axis.y[0], cam_y_axis.z[0], "Cam Y", "g"],
+            [0, 0, 0, cam_x_axis.x[0], cam_x_axis.y[0], cam_x_axis.z[0], "Cam X Cam1", "r"],
+            [0, 0, 0, cam_y_axis.x[0], cam_y_axis.y[0], cam_y_axis.z[0], "Cam Y Cam1", "g"],
             [
                 0,
                 0,
@@ -763,7 +917,7 @@ def main():
                 central_pixel_vector.x[0],
                 central_pixel_vector.y[0],
                 central_pixel_vector.z[0],
-                "Cam Z (Central Pixel Pointing)",
+                "Cam Z (Central Pixel Pointing) Cam1",
                 "b",
             ],
             [
@@ -773,8 +927,28 @@ def main():
                 reference_vector_horizon.x[0],
                 reference_vector_horizon.y[0],
                 reference_vector_horizon.z[0],
-                "Horizon Reference",
+                "Horizon Reference Horz",
                 "darkorange",
+            ],
+            [
+                0,
+                0,
+                0,
+                reference_vector_horizon_cad.x[0],
+                reference_vector_horizon_cad.y[0],
+                reference_vector_horizon_cad.z[0],
+                "Horizon Reference CAD Horz",
+                "lavender",
+            ],
+            [
+                0,
+                0,
+                0,
+                reference_vector_horizon_camera.x[0],
+                reference_vector_horizon_camera.y[0],
+                reference_vector_horizon_camera.z[0],
+                "Horizon Reference Camera Cam1",
+                "tan",
             ],
             [
                 0,
@@ -783,7 +957,7 @@ def main():
                 cam_xyz_t[0][0] * 0.75,
                 cam_xyz_t[0][1] * 0.75,
                 cam_xyz_t[0][2] * 0.75,
-                "Cam X Transformed",
+                "Cam X Transformed Horz",
                 "maroon",
             ],
             [
@@ -793,7 +967,7 @@ def main():
                 cam_xyz_t[1][0] * 0.75,
                 cam_xyz_t[1][1] * 0.75,
                 cam_xyz_t[1][2] * 0.75,
-                "Cam Y Transformed",
+                "Cam Y Transformed Horz",
                 "lime",
             ],
             [
@@ -803,7 +977,7 @@ def main():
                 cam_xyz_t[2][0] * 0.75,
                 cam_xyz_t[2][1] * 0.75,
                 cam_xyz_t[2][2] * 0.75,
-                "Cam Z Transformed",
+                "Cam Z Transformed Horz",
                 "midnightblue",
             ],
             [
@@ -813,7 +987,7 @@ def main():
                 cam_xyz_tr[0][0] * 0.5,
                 cam_xyz_tr[0][1] * 0.5,
                 cam_xyz_tr[0][2] * 0.5,
-                "Cam X Transformed Roll",
+                "Cam X Transformed Roll Horz",
                 "aqua",
             ],
             [
@@ -823,7 +997,7 @@ def main():
                 cam_xyz_tr[1][0] * 0.5,
                 cam_xyz_tr[1][1] * 0.5,
                 cam_xyz_tr[1][2] * 0.5,
-                "Cam Y Transformed Roll",
+                "Cam Y Transformed Roll Horz",
                 "blueviolet",
             ],
             [
@@ -833,7 +1007,7 @@ def main():
                 cam_xyz_tr[2][0] * 0.5,
                 cam_xyz_tr[2][1] * 0.5,
                 cam_xyz_tr[2][2] * 0.5,
-                "Cam Z Transformed Roll",
+                "Cam Z Transformed Roll Horz",
                 "deeppink",
             ],
         ]
@@ -858,7 +1032,7 @@ def main():
                     color="olivedrab",
                     label="Untransformed Camera Vec Sample",
                 )
-                pix_pyr_t.append(cam_horizon_transform.apply(vec.data.reshape(3)))
+                pix_pyr_t.append(cam_mirror_transform.apply(vec.data.reshape(3)))
                 ax.quiver(
                     0,
                     0,
@@ -882,7 +1056,7 @@ def main():
                     color="olivedrab",
                     label=None,
                 )
-                pix_pyr_t.append(cam_horizon_transform.apply(vec.data.reshape(3)))
+                pix_pyr_t.append(cam_mirror_transform.apply(vec.data.reshape(3)))
                 ax.quiver(
                     0,
                     0,
@@ -913,8 +1087,8 @@ def main():
                     )
                     cam_vec_horizon = cam_horizon_transform.apply(cam_vec_original.reshape(3))
                     _, slope_1_corr, slope_2_corr = safe_calculate_slope(
-                        cam_vec_horizon.reshape(3),
-                        cam_vec_horizon.reshape(3),
+                        cam_vec_horizon.reshape(3) * -1,
+                        cam_vec_horizon.reshape(3) * -1,
                         details["intersection_1"],
                         details["intersection_2"],
                     )
@@ -923,15 +1097,24 @@ def main():
                     )
                     vector_data[pixel]["angle_between"] = angle_between
                     vector_data[pixel]["observer_vector_camera_corrected"] = cam_vec_horizon
-                    vector_data[pixel]["slope_1_camera_corrected"] = slope_1_corr
-                    vector_data[pixel]["slope_2_camera_corrected"] = slope_2_corr
+                    vector_data[pixel]["H_slope_1_camera_corrected"] = slope_1_corr
+                    vector_data[pixel]["H_slope_2_camera_corrected"] = slope_2_corr
+                    vector_data[pixel]["C_slope_1_camera_corrected"] = cam_horizon_transform.inv().apply(slope_1_corr)
+                    vector_data[pixel]["C_slope_2_camera_corrected"] = cam_horizon_transform.inv().apply(slope_2_corr)
+                    vector_data[pixel]["M_slope_1_camera_corrected"] = r_optic_cam_refine_1.inv().apply(
+                        vector_data[pixel]["C_slope_1_camera_corrected"]
+                    )
+                    vector_data[pixel]["M_slope_2_camera_corrected"] = r_optic_cam_refine_1.inv().apply(
+                        vector_data[pixel]["C_slope_2_camera_corrected"]
+                    )
                 else:
                     continue
             else:
                 pass
 
+        '''
         mirror_pixel_coords, mirror_slope_1, mirror_slope_2 = image_to_mirror_coords(
-            r_optic_cam_refine_1.inv(), v_cam_optic_cam_refine_1, vector_data
+            cam_mirror_transform.inv(), v_cam_optic_cam_refine_1, vector_data
         )
         fig = plt.figure()
         ax = fig.add_subplot(111, projection='3d')
@@ -939,9 +1122,14 @@ def main():
         ax.set_xlabel("x")
         ax.set_ylabel("y")
         ax.set_zlabel("z")
-        plot_slope_heat_maps(data_dict=vector_data)
-        plot_slope_heat_maps_updated(data_dict=vector_data)
+        # plot_slope_heat_maps(data_dict=vector_data)
+        
         plt.show()
+        '''
+
+        plot_slope_heat_maps_horizonal(data_dict=vector_data)
+        plot_slope_heat_maps_camera(data_dict=vector_data)
+        plot_slope_heat_maps_mirror(data_dict=vector_data)
         print("done")
 
 

@@ -4,6 +4,7 @@ import numpy as np
 from logging import DEBUG, ERROR
 import cv2
 import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
 from scipy.optimize import minimize
 from scipy.spatial.transform import Rotation
 from scipy.interpolate import griddata
@@ -698,6 +699,49 @@ def plot_heat_maps_radians(x_coords, y_coords, slopes, best_slope, set_label):
     # plt.show()
 
 
+def plot_scatter_heat_map(coordinates, slopes, set_label):
+
+    x_coords = coordinates[:, 0]
+    y_coords = coordinates[:, 1]
+    z_coords = coordinates[:, 2]
+    x_vec = slopes[:, 0]
+    y_vec = slopes[:, 1]
+    z_vec = slopes[:, 2]
+
+    # Create subplots
+    fig = plt.figure(figsize=(18, 6))
+
+    # Scatter plot for x_vec
+    ax1 = fig.add_subplot(131, projection='3d')
+    scatter_x = ax1.scatter(x_coords, y_coords, z_coords, c=x_vec, cmap='jet', s=1)
+    ax1.set_title("X " + set_label)
+    ax1.set_xlabel('X Coordinate')
+    ax1.set_ylabel('Y Coordinate')
+    ax1.set_zlabel('Z Coordinate')
+    fig.colorbar(scatter_x, ax=ax1)
+
+    # Scatter plot for y_vec
+    ax2 = fig.add_subplot(132, projection='3d')
+    scatter_y = ax2.scatter(x_coords, y_coords, z_coords, c=y_vec, cmap='jet', s=1)
+    ax2.set_title("Y " + set_label)
+    ax2.set_xlabel('X Coordinate')
+    ax2.set_ylabel('Y Coordinate')
+    ax2.set_zlabel('Z Coordinate')
+    fig.colorbar(scatter_y, ax=ax2)
+
+    # Scatter plot for z_vec
+    ax3 = fig.add_subplot(133, projection='3d')
+    scatter_z = ax3.scatter(x_coords, y_coords, z_coords, c=z_vec, cmap='jet', s=1)
+    ax3.set_title("Z " + set_label)
+    ax3.set_xlabel('X Coordinate')
+    ax3.set_ylabel('Y Coordinate')
+    ax3.set_zlabel('Z Coordinate')
+    fig.colorbar(scatter_z, ax=ax3)
+
+    # Adjust layout
+    plt.tight_layout()
+
+
 def plot_heat_maps_horizonal_looking_up(vector_data):
     x_coords_set, y_coords_set, slope_set1, slope_set2 = [], [], [], []
     for pixel, details in vector_data.items():
@@ -728,6 +772,149 @@ def plot_heat_maps_horizonal_looking_up(vector_data):
     plot_heat_maps_no_comparison(x_coords_set, y_coords_set, H_slope_look_up_2, "Set 2 Horizonal Looking Up")
 
 
+def plot_heat_maps_camera_looking_up_coords(vector_data):
+    x_pix_set, y_pix_set, C_coords, slope_set1, slope_set2 = [], [], [], [], []
+    for pixel, details in vector_data.items():
+        if isinstance(details, dict):
+            if details["intersection_1"].size > 0:
+                row, col = ast.literal_eval(pixel)
+
+                x_pix_set.append(col)
+                y_pix_set.append(row)
+                C_coords.append(vector_data[pixel]["C_point_location"])
+                slope_set1.append(vector_data[pixel]["C_slope_1_camera_corrected"])
+                slope_set2.append(vector_data[pixel]["C_slope_2_camera_corrected"])
+
+            else:
+                continue
+        else:
+            pass
+
+    C_coords = np.array(C_coords).squeeze(axis=1)
+    C_xyz_axis = np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1]])
+    mean_direction_1 = np.mean(np.array(slope_set1), axis=0)
+    mean_direction_1 = mean_direction_1 / np.linalg.norm(mean_direction_1)
+    mean_direction_2 = np.mean(np.array(slope_set2), axis=0)
+    mean_direction_2 = mean_direction_2 / np.linalg.norm(mean_direction_2)
+    C_look_axis_rot_1, _ = rotation_matrix_scipy(mean_direction_1, np.array([0, 0, 1]))
+    C_look_axis_rot_2, _ = rotation_matrix_scipy(mean_direction_2, np.array([0, 0, 1]))
+    mean_direction_r_1 = C_look_axis_rot_1.apply(mean_direction_1)
+    mean_direction_r_2 = C_look_axis_rot_2.apply(mean_direction_2)
+    C_xyz_axis_r_1 = C_look_axis_rot_1.apply(C_xyz_axis)
+    C_xyz_axis_r_2 = C_look_axis_rot_2.apply(C_xyz_axis)
+    C_slope_look_axis_1, C_slope_look_axis_2, C_coords_look_axis_1, C_coords_look_axis_2 = [], [], [], []
+
+    C_slope_look_axis_1 = C_look_axis_rot_1.apply(np.array(slope_set1))
+    C_coords_look_axis_1 = C_look_axis_rot_1.apply(C_coords)
+    C_slope_look_axis_2 = C_look_axis_rot_2.apply(np.array(slope_set2))
+    C_coords_look_axis_2 = C_look_axis_rot_2.apply(C_coords)
+
+    plot_scatter_heat_map(C_coords, np.array(slope_set1), "Set 1 Camera Corrected")
+    add_3d_axes_to_plot(C_coords[0], C_xyz_axis)
+    add_vector_to_plot(C_coords[round(len(C_coords) / 2)], mean_direction_1, 'orange')
+    add_vector_to_plot(C_coords[round(len(C_coords) / 2)], mean_direction_r_1, 'black')
+
+    plot_scatter_heat_map(C_coords, np.array(slope_set2), "Set 2 Camera Corrected")
+    add_3d_axes_to_plot(C_coords[0], C_xyz_axis)
+    add_vector_to_plot(C_coords[round(len(C_coords) / 2)], mean_direction_1, 'orange')
+    add_vector_to_plot(C_coords[round(len(C_coords) / 2)], mean_direction_r_1, 'black')
+
+    plot_scatter_heat_map(C_coords_look_axis_1, C_slope_look_axis_1, "Set 1 Camera Looking Optical Axis")
+    add_3d_axes_to_plot(C_coords_look_axis_1[0], C_xyz_axis)
+    add_3d_axes_to_plot(C_coords_look_axis_1[0], C_xyz_axis_r_1, color_sequence=["y", "m", "c"])
+    add_vector_to_plot(C_coords_look_axis_1[round(len(C_coords_look_axis_1) / 2)], mean_direction_1, 'orange')
+    add_vector_to_plot(C_coords_look_axis_1[round(len(C_coords_look_axis_1) / 2)], mean_direction_r_1, 'black')
+
+    plot_scatter_heat_map(C_coords_look_axis_2, C_slope_look_axis_2, "Set 2 Camera Looking Optical Axis")
+    add_3d_axes_to_plot(C_coords_look_axis_2[0], C_xyz_axis)
+    add_3d_axes_to_plot(C_coords_look_axis_2[0], C_xyz_axis_r_2, color_sequence=["y", "m", "c"])
+    add_vector_to_plot(C_coords_look_axis_2[round(len(C_coords_look_axis_2) / 2)], mean_direction_1, 'orange')
+    add_vector_to_plot(C_coords_look_axis_2[round(len(C_coords_look_axis_2) / 2)], mean_direction_r_1, 'black')
+
+    C_coords_look_axis_1_translate = C_coords_look_axis_1 - np.mean(C_coords_look_axis_1, axis=0)
+    C_coords_look_axis_2_translate = C_coords_look_axis_2 - np.mean(C_coords_look_axis_2, axis=0)
+
+    C_coords_xy_rot_1 = transform_to_xy_plane(
+        [
+            C_coords_look_axis_1_translate[0, :],
+            C_coords_look_axis_1_translate[-1, :],
+            C_coords_look_axis_1_translate[1000, :],
+        ]
+    )
+    C_coords_xy_rot_2 = transform_to_xy_plane(
+        [
+            C_coords_look_axis_2_translate[0, :],
+            C_coords_look_axis_2_translate[-1, :],
+            C_coords_look_axis_2_translate[1000, :],
+        ]
+    )
+
+    C_xyz_axis_rr_1 = C_coords_xy_rot_1.apply(C_xyz_axis_r_1)
+    C_xyz_axis_rr_2 = C_coords_xy_rot_2.apply(C_xyz_axis_r_2)
+
+    C_coords_xy_1 = C_coords_xy_rot_1.apply(C_coords_look_axis_1)
+    C_slopes_xy_1 = C_coords_xy_rot_1.apply(C_slope_look_axis_1)
+    C_coords_xy_2 = C_coords_xy_rot_2.apply(C_coords_look_axis_2)
+    C_slopes_xy_2 = C_coords_xy_rot_2.apply(C_slope_look_axis_2)
+
+    plot_scatter_heat_map(C_coords_xy_1, C_slopes_xy_1, "Set 1 Camera Looking Anti Optical Axis XY Plane")
+    add_3d_axes_to_plot(C_coords_xy_1[0], C_xyz_axis)
+    add_3d_axes_to_plot(C_coords_xy_1[0], C_xyz_axis_rr_1, color_sequence=["y", "m", "c"])
+
+    plot_scatter_heat_map(C_coords_xy_2, C_slopes_xy_2, "Set 2 Camera Looking Anti Optical Axis XY Plane")
+    add_3d_axes_to_plot(C_coords_xy_2[0], C_xyz_axis)
+    add_3d_axes_to_plot(C_coords_xy_1[0], C_xyz_axis_rr_2, color_sequence=["y", "m", "c"])
+
+    print("cam_plotting.....")
+
+
+def plot_heat_maps_mirror_looking_up_coords(vector_data):
+    x_pix_set, y_pix_set, M_coords, slope_set1, slope_set2 = [], [], [], [], []
+    for pixel, details in vector_data.items():
+        if isinstance(details, dict):
+            if details["intersection_1"].size > 0:
+                row, col = ast.literal_eval(pixel)
+
+                x_pix_set.append(col)
+                y_pix_set.append(row)
+                M_coords.append(vector_data[pixel]["M_point_location"])
+                slope_set1.append(vector_data[pixel]["M_slope_1_camera_corrected"])
+                slope_set2.append(vector_data[pixel]["M_slope_2_camera_corrected"])
+
+            else:
+                continue
+        else:
+            pass
+
+    M_coords = np.array(M_coords).squeeze(axis=1)
+    M_xyz_axis = np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1]])
+    mean_direction_1 = np.mean(np.array(slope_set1), axis=0)
+    mean_direction_1 = mean_direction_1 / np.linalg.norm(mean_direction_1)
+    mean_direction_2 = np.mean(np.array(slope_set2), axis=0)
+    mean_direction_2 = mean_direction_2 / np.linalg.norm(mean_direction_2)
+    M_look_axis_rot_1, _ = rotation_matrix_scipy(mean_direction_1, np.array([0, 0, -1]))
+    M_look_axis_rot_2, _ = rotation_matrix_scipy(mean_direction_2, np.array([0, 0, -1]))
+    mean_direction_r_1 = M_look_axis_rot_1.apply(mean_direction_1)
+    mean_direction_r_2 = M_look_axis_rot_2.apply(mean_direction_2)
+    M_slope_look_axis_1, M_slope_look_axis_2, M_coords_look_axis_1, M_coords_look_axis_2 = [], [], [], []
+
+    M_slope_look_axis_1 = M_look_axis_rot_1.apply(np.array(slope_set1))
+    M_coords_look_axis_1 = M_look_axis_rot_1.apply(M_coords)
+    M_slope_look_axis_2 = M_look_axis_rot_2.apply(np.array(slope_set2))
+    M_coords_look_axis_2 = M_look_axis_rot_2.apply(M_coords)
+
+    plot_scatter_heat_map(M_coords, np.array(slope_set1), "Set 1 Mirror Camera Corrected")
+    add_3d_axes_to_plot(M_coords[0], M_xyz_axis)
+    add_vector_to_plot(M_coords[round(len(M_coords) / 2)], mean_direction_1, 'orange')
+    add_vector_to_plot(M_coords[round(len(M_coords) / 2)], mean_direction_r_1, 'black')
+
+    plot_scatter_heat_map(M_coords_look_axis_1, M_slope_look_axis_1, "Set 1 Mirror Looking Up")
+    add_3d_axes_to_plot(M_coords_look_axis_1[0], M_xyz_axis)
+    add_vector_to_plot(M_coords_look_axis_1[round(len(M_coords_look_axis_1) / 2)], mean_direction_1, 'orange')
+    add_vector_to_plot(M_coords_look_axis_1[round(len(M_coords_look_axis_1) / 2)], mean_direction_r_1, 'black')
+    print("mirror plotting....")
+
+
 def estimate_pixel_to_camera_coords_3D(camera, data_dict, ref_distance, rot_obj, t_vec):
 
     K_inv = np.linalg.inv(camera.intrinsic_mat)
@@ -745,6 +932,113 @@ def estimate_pixel_to_camera_coords_3D(camera, data_dict, ref_distance, rot_obj,
             pass
 
     return data_dict
+
+
+def add_3d_axes_to_plot(point, xyz_vec_array, color_sequence=None):
+    # Access the current figure and cycle through each axis
+    fig = plt.gcf()
+    for ax in fig.get_axes():
+        if isinstance(ax, Axes3D):
+            # Plot arrows using quiver
+            if color_sequence:
+                for index, color in enumerate(color_sequence):
+                    ax.quiver(
+                        point[0],
+                        point[1],
+                        point[2],
+                        xyz_vec_array[index, 0],
+                        xyz_vec_array[index, 1],
+                        xyz_vec_array[index, 2],
+                        color=color,
+                        length=2,
+                        normalize=True,
+                    )
+            else:
+                for index, color in enumerate(["r", "g", "b"]):
+                    ax.quiver(
+                        point[0],
+                        point[1],
+                        point[2],
+                        xyz_vec_array[index, 0],
+                        xyz_vec_array[index, 1],
+                        xyz_vec_array[index, 2],
+                        color=color,
+                        length=2,
+                        normalize=True,
+                    )
+
+
+def add_vector_to_plot(point, xyz_vec_array, color):
+    # Access the current figure and cycle through each axis
+    fig = plt.gcf()
+    for ax in fig.get_axes():
+        if isinstance(ax, Axes3D):
+            # Plot arrows using quiver
+            ax.quiver(
+                point[0],
+                point[1],
+                point[2],
+                xyz_vec_array[0],
+                xyz_vec_array[1],
+                xyz_vec_array[2],
+                color=color,
+                length=2,
+                normalize=True,
+            )
+
+
+def plot_pixel_camera_and_mirror_coords(data_dict):
+
+    cam_coords, mir_coords = [], []
+    for pixel, details in data_dict.items():
+        if isinstance(details, dict):
+            if details["intersection_1"].size > 0:
+                cam_coords.append(data_dict[pixel]["C_point_location"])
+                mir_coords.append(data_dict[pixel]["M_point_location"])
+            else:
+                continue
+        else:
+            pass
+
+    cam_coords = np.array(cam_coords).squeeze(axis=1)
+    mir_coords = np.array(mir_coords).squeeze(axis=1)
+    fig = plt.figure(figsize=plt.figaspect(0.5))
+    ax1 = fig.add_subplot(1, 2, 1, projection='3d')
+    ax2 = fig.add_subplot(1, 2, 2, projection='3d')
+
+    skip_num = 50
+    ax1.scatter(cam_coords[::skip_num, 0], cam_coords[::skip_num, 1], cam_coords[::skip_num, 2], c='k', s=1)
+    ax1.set_xlabel('X axis Camera')
+    ax1.set_ylabel('Y axis Camera')
+    ax1.set_zlabel('Z axis Camera')
+    ax1.set_title("Camera Coordinates")
+
+    ax2.scatter(mir_coords[::skip_num, 0], mir_coords[::skip_num, 1], mir_coords[::skip_num, 2], c='g', s=1)
+    ax2.set_xlabel('X axis Mirror')
+    ax2.set_ylabel('Y axis Mirror')
+    ax2.set_zlabel('Z axis Mirror')
+    ax2.set_title("Mirror Coordinates")
+
+
+def transform_to_xy_plane(points):
+    # Ensure points is a numpy array
+    points = np.asarray(points)
+
+    # Step 1: Calculate the normal vector of the plane
+    # Using the given 3 points to define a plane
+    if points.shape[0] < 3:
+        raise ValueError("At least three points are required to define a plane.")
+
+    v1 = points[1] - points[0]
+    v2 = points[2] - points[0]
+    normal = np.cross(v1, v2)
+    normal = normal / np.linalg.norm(normal)  # Normalize the normal vector
+
+    # Step 2: Calculate the rotation needed to align the normal with the Z-axis
+    z_axis = np.array([0, 0, 1])
+    rotation, _ = rotation_matrix_scipy(normal, z_axis)
+
+    return rotation
 
 
 def main():
@@ -842,23 +1136,6 @@ def main():
     warped_image = cv2.warpPerspective(mask_image, perspective_matrix[0], (1920, 1080))
     # cv2.imshow("Original", mask_image)
     # cv2.imshow("Warped", warped_image)
-    '''
-    ret, rvec, tvec = cv2.solvePnP(
-        expected_corners_facet_coords_manual.data.T,
-        v_corners_image.vertices.data.T,
-        cam.intrinsic_mat,
-        cam.distortion_coef,
-    )
-    # r_optic_cam_refine_1, v_cam_optic_cam_refine_1 = sp.calc_rt_from_img_pts(
-    #     pts_image=v_corners_image.vertices, pts_object=expected_corners_facet_coords_manual, camera=cam
-    # )
-    R, _ = cv2.Rodrigues(rvec)
-    R_inv = R.T
-    t_inv = -R_inv @ tvec
-    Rt = np.hstack((cv2.Rodrigues(rvec)[0], tvec))
-
-    undistorted_point_norm = cv2.undistortPoints(expected_corners_manual.data.T, cam.intrinsic_mat, cam.distortion_coef, P=cam.intrinsic_mat)
-    '''
 
     pixel_pointing = imgp.calculate_active_pixels_vectors(mask=all_pixels, camera=cam)
     pixel_pointing_2 = imgp.calculate_active_pixels_vectors(mask=all_pixels, camera=cam2)
@@ -918,13 +1195,6 @@ def main():
         test_output_x.append(rotate_vector(item, np.array([1, 0, 0]), degrees=45))
         test_output_y.append(rotate_vector(item, np.array([0, 1, 0]), degrees=45))
         test_output_z.append(rotate_vector(item, np.array([0, 0, 1]), degrees=45))
-    '''
-    with np.nditer(test_vectors, flags=["external_loop"], op_flags=['readonly']) as it:
-        for item in it:
-            test_output_x.append(rotate_vector(item, np.array([1, 0, 0]), degrees=90))
-            test_output_y.append(rotate_vector(item, np.array([0, 1, 0]), degrees=90))
-            test_output_y.append(rotate_vector(item, np.array([0, 0, 1]), degrees=90))
-    '''
 
     roll_control_angle = binary_search_angle(
         vector=cam_xyz_t[0], axis=cam_xyz_t[2], function=rotate_vector, tolerance=1e-6, max_iterations=1000
@@ -1184,8 +1454,10 @@ def main():
             else:
                 pass
 
-        plot_heat_maps_horizonal_looking_up(vector_data)
-
+        # plot_heat_maps_horizonal_looking_up(vector_data)
+        # plot_pixel_camera_and_mirror_coords(vector_data)
+        plot_heat_maps_camera_looking_up_coords(vector_data)
+        plot_heat_maps_mirror_looking_up_coords(vector_data)
         plot_slope_heat_maps_horizonal(data_dict=vector_data)
         # plot_slope_heat_maps_camera(data_dict=vector_data)
         # plot_slope_heat_maps_mirror(data_dict=vector_data)

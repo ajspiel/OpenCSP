@@ -16,6 +16,9 @@ import opencsp.app.lookback.lookback_tools as lbt
 
 from opencsp.common.lib.camera.Camera import Camera
 
+from opencsp.common.lib.csp.StandardPlotOutput import StandardPlotOutput
+from opencsp.common.lib.csp.LightSourceSun import LightSourceSun
+import opencsp.common.lib.tool.file_tools as ft
 import opencsp.common.lib.render.figure_management as fm
 import opencsp.common.lib.render_control.RenderControlFigure as rcfg
 import opencsp.common.lib.render_control.RenderControlAxis as rca
@@ -26,6 +29,11 @@ import opencsp.app.sofast.lib.spatial_processing as sp
 from opencsp.common.lib.geometry.Vxy import Vxy
 from opencsp.common.lib.geometry.Vxyz import Vxyz
 from opencsp.common.lib.geometry.Uxyz import Uxyz
+from opencsp.common.lib.geometry.Pxyz import Pxyz
+from opencsp.common.lib.geometry.LoopXY import LoopXY
+from opencsp.common.lib.geometry.RegionXY import RegionXY
+from opencsp.common.lib.csp.MirrorPoint import MirrorPoint
+from opencsp.common.lib.csp.MirrorParametric import MirrorParametric
 
 
 # Specify the folder where the log file should be saved
@@ -169,6 +177,66 @@ def binary_search_angle(vector, axis, function, tolerance=1e-6, max_iterations=1
 
         # Update the search range based on the sign of the z-component
         if z_component > 0:
+            high = mid
+        else:
+            low = mid
+
+    # If the search did not converge, return the midpoint of the final range
+    return (low + high) / 2.0
+
+
+def binary_search_angle_select(
+    vector, axis, function, component_index=2, tolerance=1e-6, max_iterations=1000, num_initial_samples=36
+):
+    """
+    Performs a binary search to find the angle that minimizes the user-selected component of the rotated vector.
+
+    Parameters:
+        vector (numpy.ndarray): The vector to rotate (1D array of shape (3,)).
+        axis (numpy.ndarray): The axis to rotate about (1D array of shape (3,)).
+        function (callable): Function to rotate the vector.
+        component_index (int): The index of the component to minimize (0 for x, 1 for y, 2 for z).
+        tolerance (float): The tolerance for the selected component to be considered zero.
+        max_iterations (int): Maximum number of iterations for the binary search.
+        num_initial_samples (int): Number of initial angles to sample for the linear search.
+
+    Returns:
+        float: The angle in degrees that minimizes the specified component of the rotated vector.
+    """
+    # Initial linear search from -180 to 180 degrees
+    angles = np.linspace(-180, 180, num_initial_samples)
+    best_angle = None
+    best_value = float('inf')
+
+    for angle in angles:
+        rotated_vector = function(vector, axis, angle)
+        component_value = rotated_vector[component_index]
+
+        # Update best angle and value
+        if abs(component_value) < abs(best_value):
+            best_value = component_value
+            best_angle = angle
+
+    # Determine the two angles around the best angle for binary search
+    low = best_angle - 1  # Start just below the best angle
+    high = best_angle + 1  # Start just above the best angle
+
+    for iteration in range(max_iterations):
+        # Calculate the midpoint angle
+        mid = (low + high) / 2.0
+
+        # Rotate the vector at the midpoint angle
+        rotated_vector = function(vector, axis, mid)
+
+        # Check the specified component of the rotated vector
+        component_value = rotated_vector[component_index]
+
+        if abs(component_value) < tolerance:
+            # If the component is close to zero, return the angle
+            return mid
+
+        # Update the search range based on the sign of the component value
+        if component_value > 0:
             high = mid
         else:
             low = mid
@@ -796,8 +864,8 @@ def plot_heat_maps_camera_looking_up_coords(vector_data):
     mean_direction_1 = mean_direction_1 / np.linalg.norm(mean_direction_1)
     mean_direction_2 = np.mean(np.array(slope_set2), axis=0)
     mean_direction_2 = mean_direction_2 / np.linalg.norm(mean_direction_2)
-    C_look_axis_rot_1, _ = rotation_matrix_scipy(mean_direction_1, np.array([0, 0, 1]))
-    C_look_axis_rot_2, _ = rotation_matrix_scipy(mean_direction_2, np.array([0, 0, 1]))
+    C_look_axis_rot_1, _ = rotation_matrix_scipy(mean_direction_1, np.array([0, 0, 1]))  # Rotation
+    C_look_axis_rot_2, _ = rotation_matrix_scipy(mean_direction_2, np.array([0, 0, 1]))  # Rotation
     mean_direction_r_1 = C_look_axis_rot_1.apply(mean_direction_1)
     mean_direction_r_2 = C_look_axis_rot_2.apply(mean_direction_2)
     C_xyz_axis_r_1 = C_look_axis_rot_1.apply(C_xyz_axis)
@@ -816,8 +884,8 @@ def plot_heat_maps_camera_looking_up_coords(vector_data):
 
     plot_scatter_heat_map(C_coords, np.array(slope_set2), "Set 2 Camera Corrected")
     add_3d_axes_to_plot(C_coords[0], C_xyz_axis)
-    add_vector_to_plot(C_coords[round(len(C_coords) / 2)], mean_direction_1, 'orange')
-    add_vector_to_plot(C_coords[round(len(C_coords) / 2)], mean_direction_r_1, 'black')
+    add_vector_to_plot(C_coords[round(len(C_coords) / 2)], mean_direction_2, 'orange')
+    add_vector_to_plot(C_coords[round(len(C_coords) / 2)], mean_direction_r_2, 'black')
 
     plot_scatter_heat_map(C_coords_look_axis_1, C_slope_look_axis_1, "Set 1 Camera Looking Optical Axis")
     add_3d_axes_to_plot(C_coords_look_axis_1[0], C_xyz_axis)
@@ -828,11 +896,11 @@ def plot_heat_maps_camera_looking_up_coords(vector_data):
     plot_scatter_heat_map(C_coords_look_axis_2, C_slope_look_axis_2, "Set 2 Camera Looking Optical Axis")
     add_3d_axes_to_plot(C_coords_look_axis_2[0], C_xyz_axis)
     add_3d_axes_to_plot(C_coords_look_axis_2[0], C_xyz_axis_r_2, color_sequence=["y", "m", "c"])
-    add_vector_to_plot(C_coords_look_axis_2[round(len(C_coords_look_axis_2) / 2)], mean_direction_1, 'orange')
-    add_vector_to_plot(C_coords_look_axis_2[round(len(C_coords_look_axis_2) / 2)], mean_direction_r_1, 'black')
+    add_vector_to_plot(C_coords_look_axis_2[round(len(C_coords_look_axis_2) / 2)], mean_direction_2, 'orange')
+    add_vector_to_plot(C_coords_look_axis_2[round(len(C_coords_look_axis_2) / 2)], mean_direction_r_2, 'black')
 
-    C_coords_look_axis_1_translate = C_coords_look_axis_1 - np.mean(C_coords_look_axis_1, axis=0)
-    C_coords_look_axis_2_translate = C_coords_look_axis_2 - np.mean(C_coords_look_axis_2, axis=0)
+    C_coords_look_axis_1_translate = C_coords_look_axis_1 - np.mean(C_coords_look_axis_1, axis=0)  # Translation
+    C_coords_look_axis_2_translate = C_coords_look_axis_2 - np.mean(C_coords_look_axis_2, axis=0)  # Translation
 
     C_coords_xy_rot_1 = transform_to_xy_plane(
         [
@@ -840,35 +908,101 @@ def plot_heat_maps_camera_looking_up_coords(vector_data):
             C_coords_look_axis_1_translate[-1, :],
             C_coords_look_axis_1_translate[1000, :],
         ]
-    )
+    )  # Rotation for Coordinates Only
     C_coords_xy_rot_2 = transform_to_xy_plane(
         [
             C_coords_look_axis_2_translate[0, :],
             C_coords_look_axis_2_translate[-1, :],
             C_coords_look_axis_2_translate[1000, :],
         ]
-    )
+    )  # Rotation for Coordinates Only
 
     C_xyz_axis_rr_1 = C_coords_xy_rot_1.apply(C_xyz_axis_r_1)
     C_xyz_axis_rr_2 = C_coords_xy_rot_2.apply(C_xyz_axis_r_2)
 
     C_coords_xy_1 = C_coords_xy_rot_1.apply(C_coords_look_axis_1)
-    C_slopes_xy_1 = C_coords_xy_rot_1.apply(C_slope_look_axis_1)
+    # C_slopes_xy_1 = C_coords_xy_rot_1.apply(C_slope_look_axis_1)
     C_coords_xy_2 = C_coords_xy_rot_2.apply(C_coords_look_axis_2)
-    C_slopes_xy_2 = C_coords_xy_rot_2.apply(C_slope_look_axis_2)
-
+    # C_slopes_xy_2 = C_coords_xy_rot_2.apply(C_slope_look_axis_2)
+    '''
     plot_scatter_heat_map(C_coords_xy_1, C_slopes_xy_1, "Set 1 Camera Looking Anti Optical Axis XY Plane")
     add_3d_axes_to_plot(C_coords_xy_1[0], C_xyz_axis)
     add_3d_axes_to_plot(C_coords_xy_1[0], C_xyz_axis_rr_1, color_sequence=["y", "m", "c"])
+    '''
 
+    x_align_angle_1 = binary_search_angle_select(
+        C_xyz_axis_rr_1[0],
+        C_xyz_axis[2],
+        rotate_vector,
+        component_index=1,
+        tolerance=1e-6,
+        max_iterations=5000,
+        num_initial_samples=36,
+    )
+    x_align_rot_obj_1 = create_rotation_object(axis=C_xyz_axis[2], angle_degrees=x_align_angle_1)  # Rotation
+
+    C_xyz_axis_rrr_1 = x_align_rot_obj_1.apply(C_xyz_axis_rr_1)
+    # add_3d_axes_to_plot(C_coords_xy_1[0], C_xyz_axis_rrr_1, color_sequence=["black", "gray", "purple"], arrow_length=3)
+    '''
     plot_scatter_heat_map(C_coords_xy_2, C_slopes_xy_2, "Set 2 Camera Looking Anti Optical Axis XY Plane")
     add_3d_axes_to_plot(C_coords_xy_2[0], C_xyz_axis)
-    add_3d_axes_to_plot(C_coords_xy_1[0], C_xyz_axis_rr_2, color_sequence=["y", "m", "c"])
+    add_3d_axes_to_plot(C_coords_xy_2[0], C_xyz_axis_rr_2, color_sequence=["y", "m", "c"])
+    '''
+
+    x_align_angle_2 = binary_search_angle_select(
+        C_xyz_axis_rr_2[0],
+        C_xyz_axis[2],
+        rotate_vector,
+        component_index=1,
+        tolerance=1e-6,
+        max_iterations=5000,
+        num_initial_samples=36,
+    )
+    x_align_rot_obj_2 = create_rotation_object(axis=C_xyz_axis[2], angle_degrees=x_align_angle_2)  # Rotation
+
+    C_xyz_axis_rrr_2 = x_align_rot_obj_2.apply(C_xyz_axis_rr_1)
+    # add_3d_axes_to_plot(C_coords_xy_1[0], C_xyz_axis_rrr_1, color_sequence=["black", "gray", "purple"], arrow_length=3)
+
+    C_coords_xy_align_1 = x_align_rot_obj_1.apply(C_coords_xy_1)
+    # C_slopes_xy_align_1 = x_align_rot_obj_1.apply(C_slopes_xy_1)
+    C_slopes_xy_align_1 = x_align_rot_obj_1.apply(C_slope_look_axis_1)
+
+    C_coords_xy_align_2 = x_align_rot_obj_2.apply(C_coords_xy_2)
+    # C_slopes_xy_align_2 = x_align_rot_obj_2.apply(C_slopes_xy_2)
+    C_slopes_xy_align_2 = x_align_rot_obj_2.apply(C_slope_look_axis_2)
+
+    plot_scatter_heat_map(C_coords_xy_align_1, C_slopes_xy_align_1, "Set 1 Camera XY Plane Aligned")
+    add_3d_axes_to_plot(C_coords_xy_align_1[0], C_xyz_axis)
+    add_3d_axes_to_plot(
+        C_coords_xy_align_1[0], C_xyz_axis_rrr_1, color_sequence=["black", "gray", "purple"], arrow_length=3
+    )
+
+    plot_scatter_heat_map(C_coords_xy_align_2, C_slopes_xy_align_2, "Set 2 Camera XY Plane Aligned")
+    add_3d_axes_to_plot(C_coords_xy_align_2[0], C_xyz_axis)
+    add_3d_axes_to_plot(
+        C_coords_xy_align_2[0], C_xyz_axis_rrr_2, color_sequence=["black", "gray", "purple"], arrow_length=3
+    )
+
+    set_1_results = {
+        "slopes_rotation_combined": x_align_rot_obj_1 * C_look_axis_rot_1,
+        "coords_rotation_combined": x_align_rot_obj_1 * C_coords_xy_rot_1 * C_look_axis_rot_1,
+        "coords_translation_combined": C_coords_look_axis_1_translate,
+        "coords": C_coords_xy_align_1,
+        "slopes": C_slopes_xy_align_1,
+    }
+
+    set_2_results = {
+        "slopes_rotation_combined": x_align_rot_obj_2 * C_look_axis_rot_2,
+        "coords_rotation_combined": x_align_rot_obj_2 * C_coords_xy_rot_2 * C_look_axis_rot_2,
+        "coords_translation_combined": C_coords_look_axis_2_translate,
+        "coords": C_coords_xy_align_2,
+        "slopes": C_slopes_xy_align_2,
+    }
 
     print("cam_plotting.....")
 
 
-def plot_heat_maps_mirror_looking_up_coords(vector_data):
+def plot_heat_maps_mirror_looking_up_coords(vector_data, output_dir, debug_plots=True):
     x_pix_set, y_pix_set, M_coords, slope_set1, slope_set2 = [], [], [], [], []
     for pixel, details in vector_data.items():
         if isinstance(details, dict):
@@ -892,10 +1026,12 @@ def plot_heat_maps_mirror_looking_up_coords(vector_data):
     mean_direction_1 = mean_direction_1 / np.linalg.norm(mean_direction_1)
     mean_direction_2 = np.mean(np.array(slope_set2), axis=0)
     mean_direction_2 = mean_direction_2 / np.linalg.norm(mean_direction_2)
-    M_look_axis_rot_1, _ = rotation_matrix_scipy(mean_direction_1, np.array([0, 0, -1]))
-    M_look_axis_rot_2, _ = rotation_matrix_scipy(mean_direction_2, np.array([0, 0, -1]))
+    M_look_axis_rot_1, _ = rotation_matrix_scipy(mean_direction_1, np.array([0, 0, 1]))  # Rotation
+    M_look_axis_rot_2, _ = rotation_matrix_scipy(mean_direction_2, np.array([0, 0, 1]))  # Rotation
     mean_direction_r_1 = M_look_axis_rot_1.apply(mean_direction_1)
     mean_direction_r_2 = M_look_axis_rot_2.apply(mean_direction_2)
+    M_xyz_axis_r_1 = M_look_axis_rot_1.apply(M_xyz_axis)
+    M_xyz_axis_r_2 = M_look_axis_rot_2.apply(M_xyz_axis)
     M_slope_look_axis_1, M_slope_look_axis_2, M_coords_look_axis_1, M_coords_look_axis_2 = [], [], [], []
 
     M_slope_look_axis_1 = M_look_axis_rot_1.apply(np.array(slope_set1))
@@ -903,15 +1039,130 @@ def plot_heat_maps_mirror_looking_up_coords(vector_data):
     M_slope_look_axis_2 = M_look_axis_rot_2.apply(np.array(slope_set2))
     M_coords_look_axis_2 = M_look_axis_rot_2.apply(M_coords)
 
-    plot_scatter_heat_map(M_coords, np.array(slope_set1), "Set 1 Mirror Camera Corrected")
-    add_3d_axes_to_plot(M_coords[0], M_xyz_axis)
-    add_vector_to_plot(M_coords[round(len(M_coords) / 2)], mean_direction_1, 'orange')
-    add_vector_to_plot(M_coords[round(len(M_coords) / 2)], mean_direction_r_1, 'black')
+    if debug_plots:
+        plot_scatter_heat_map(M_coords, np.array(slope_set1), "Set 1 Mirror Camera Corrected")
+        add_3d_axes_to_plot(M_coords[0], M_xyz_axis)
+        add_vector_to_plot(M_coords[round(len(M_coords) / 2)], mean_direction_1, 'orange')
+        add_vector_to_plot(M_coords[round(len(M_coords) / 2)], mean_direction_r_1, 'black')
 
-    plot_scatter_heat_map(M_coords_look_axis_1, M_slope_look_axis_1, "Set 1 Mirror Looking Up")
-    add_3d_axes_to_plot(M_coords_look_axis_1[0], M_xyz_axis)
-    add_vector_to_plot(M_coords_look_axis_1[round(len(M_coords_look_axis_1) / 2)], mean_direction_1, 'orange')
-    add_vector_to_plot(M_coords_look_axis_1[round(len(M_coords_look_axis_1) / 2)], mean_direction_r_1, 'black')
+        plot_scatter_heat_map(M_coords, np.array(slope_set2), "Set 2 Mirror Camera Corrected")
+        add_3d_axes_to_plot(M_coords[0], M_xyz_axis)
+        add_vector_to_plot(M_coords[round(len(M_coords) / 2)], mean_direction_2, 'orange')
+        add_vector_to_plot(M_coords[round(len(M_coords) / 2)], mean_direction_r_2, 'black')
+
+        plot_scatter_heat_map(M_coords_look_axis_1, M_slope_look_axis_1, "Set 1 Mirror Looking Up")
+        add_3d_axes_to_plot(M_coords_look_axis_1[0], M_xyz_axis)
+        add_vector_to_plot(M_coords_look_axis_1[round(len(M_coords_look_axis_1) / 2)], mean_direction_1, 'orange')
+        add_vector_to_plot(M_coords_look_axis_1[round(len(M_coords_look_axis_1) / 2)], mean_direction_r_1, 'black')
+
+        plot_scatter_heat_map(M_coords_look_axis_2, M_slope_look_axis_2, "Set 2 Mirror Looking Up")
+        add_3d_axes_to_plot(M_coords_look_axis_2[0], M_xyz_axis)
+        add_vector_to_plot(M_coords_look_axis_2[round(len(M_coords_look_axis_2) / 2)], mean_direction_2, 'orange')
+        add_vector_to_plot(M_coords_look_axis_2[round(len(M_coords_look_axis_2) / 2)], mean_direction_r_2, 'black')
+
+    M_coords_look_axis_1_translate = M_coords_look_axis_1 - np.mean(M_coords_look_axis_1, axis=0)  # Translation
+    M_coords_look_axis_2_translate = M_coords_look_axis_2 - np.mean(M_coords_look_axis_2, axis=0)  # Translation
+
+    M_coords_xy_rot_1 = transform_to_xy_plane(
+        [
+            M_coords_look_axis_1_translate[0, :],
+            M_coords_look_axis_1_translate[-1, :],
+            M_coords_look_axis_1_translate[1000, :],
+        ]
+    )  # Rotation for Coordinates Only
+    M_coords_xy_rot_2 = transform_to_xy_plane(
+        [
+            M_coords_look_axis_2_translate[0, :],
+            M_coords_look_axis_2_translate[-1, :],
+            M_coords_look_axis_2_translate[1000, :],
+        ]
+    )  # Rotation for Coordinates Only
+
+    M_xyz_axis_rr_1 = M_coords_xy_rot_1.apply(M_xyz_axis_r_1)
+    M_xyz_axis_rr_2 = M_coords_xy_rot_2.apply(M_xyz_axis_r_2)
+
+    M_coords_xy_1 = M_coords_xy_rot_1.apply(M_coords_look_axis_1)
+    # M_slopes_xy_1 = M_coords_xy_rot_1.apply(M_slope_look_axis_1)
+    M_coords_xy_2 = M_coords_xy_rot_2.apply(M_coords_look_axis_2)
+    # M_slopes_xy_2 = M_coords_xy_rot_2.apply(M_slope_look_axis_2)
+    '''
+    plot_scatter_heat_map(M_coords_xy_1, M_slopes_xy_1, "Set 1 Mirror Looking Up XY Plane")
+    add_3d_axes_to_plot(M_coords_xy_1[0], M_xyz_axis)
+    add_3d_axes_to_plot(M_coords_xy_1[0], M_xyz_axis_rr_1, color_sequence=["y", "m", "c"])
+    '''
+
+    x_align_angle_1 = binary_search_angle_select(
+        M_xyz_axis_rr_1[0],
+        M_xyz_axis[2],
+        rotate_vector,
+        component_index=1,
+        tolerance=1e-6,
+        max_iterations=5000,
+        num_initial_samples=36,
+    )
+    x_align_rot_obj_1 = create_rotation_object(axis=M_xyz_axis[2], angle_degrees=x_align_angle_1)  # Rotation
+
+    M_xyz_axis_rrr_1 = x_align_rot_obj_1.apply(M_xyz_axis_rr_1)
+    # add_3d_axes_to_plot(M_coords_xy_1[0], M_xyz_axis_rrr_1, color_sequence=["black", "gray", "purple"], arrow_length=3)
+    '''
+    plot_scatter_heat_map(M_coords_xy_2, M_slopes_xy_2, "Set 2 Mirror Looking Up XY Plane")
+    add_3d_axes_to_plot(M_coords_xy_2[0], M_xyz_axis)
+    add_3d_axes_to_plot(M_coords_xy_2[0], M_xyz_axis_rr_2, color_sequence=["y", "m", "c"])
+    '''
+
+    x_align_angle_2 = binary_search_angle_select(
+        M_xyz_axis_rr_2[0],
+        M_xyz_axis[2],
+        rotate_vector,
+        component_index=1,
+        tolerance=1e-6,
+        max_iterations=5000,
+        num_initial_samples=36,
+    )
+    x_align_rot_obj_2 = create_rotation_object(axis=M_xyz_axis[2], angle_degrees=x_align_angle_2)  # Rotation
+
+    M_xyz_axis_rrr_2 = x_align_rot_obj_2.apply(M_xyz_axis_rr_1)
+    # add_3d_axes_to_plot(M_coords_xy_1[0], M_xyz_axis_rrr_1, color_sequence=["black", "gray", "purple"], arrow_length=3)
+
+    M_coords_xy_align_1 = x_align_rot_obj_1.apply(M_coords_xy_1)
+    # M_slopes_xy_align_1 = x_align_rot_obj_1.apply(M_slopes_xy_1)
+    M_slopes_xy_align_1 = x_align_rot_obj_1.apply(M_slope_look_axis_1)
+
+    M_coords_xy_align_2 = x_align_rot_obj_2.apply(M_coords_xy_2)
+    # M_slopes_xy_align_2 = x_align_rot_obj_2.apply(M_slopes_xy_2)
+    M_slopes_xy_align_2 = x_align_rot_obj_2.apply(M_slope_look_axis_2)
+    if debug_plots:
+        plot_scatter_heat_map(M_coords_xy_align_1, M_slopes_xy_align_1, "Set 1 Mirror XY Plane Aligned")
+        add_3d_axes_to_plot(M_coords_xy_align_1[0], M_xyz_axis)
+        add_3d_axes_to_plot(
+            M_coords_xy_align_1[0], M_xyz_axis_rrr_1, color_sequence=["black", "gray", "purple"], arrow_length=3
+        )
+
+        plot_scatter_heat_map(M_coords_xy_align_2, M_slopes_xy_align_2, "Set 2 Mirror XY Plane Aligned")
+        add_3d_axes_to_plot(M_coords_xy_align_2[0], M_xyz_axis)
+        add_3d_axes_to_plot(
+            M_coords_xy_align_2[0], M_xyz_axis_rrr_2, color_sequence=["black", "gray", "purple"], arrow_length=3
+        )
+
+    set_1_results = {
+        "slopes_rotation_combined": x_align_rot_obj_1 * M_look_axis_rot_1,
+        "coords_rotation_combined": x_align_rot_obj_1 * M_coords_xy_rot_1 * M_look_axis_rot_1,
+        "coords_translation_combined": M_coords_look_axis_1_translate,
+        "coords": M_coords_xy_align_1,
+        "slopes": M_slopes_xy_align_1,
+    }
+
+    set_2_results = {
+        "slopes_rotation_combined": x_align_rot_obj_2 * M_look_axis_rot_2,
+        "coords_rotation_combined": x_align_rot_obj_2 * M_coords_xy_rot_2 * M_look_axis_rot_2,
+        "coords_translation_combined": M_coords_look_axis_2_translate,
+        "coords": M_coords_xy_align_2,
+        "slopes": M_slopes_xy_align_2,
+    }
+    # Calculate the convex hull of points, force rectangle, then axis align again.
+    sofast_plotting(output_directory=os.path.join(output_dir, "set_1"), solution_set=set_1_results)
+    sofast_plotting(output_directory=os.path.join(output_dir, "set_2"), solution_set=set_2_results)
+
     print("mirror plotting....")
 
 
@@ -934,7 +1185,7 @@ def estimate_pixel_to_camera_coords_3D(camera, data_dict, ref_distance, rot_obj,
     return data_dict
 
 
-def add_3d_axes_to_plot(point, xyz_vec_array, color_sequence=None):
+def add_3d_axes_to_plot(point, xyz_vec_array, color_sequence=None, arrow_length=2):
     # Access the current figure and cycle through each axis
     fig = plt.gcf()
     for ax in fig.get_axes():
@@ -950,7 +1201,7 @@ def add_3d_axes_to_plot(point, xyz_vec_array, color_sequence=None):
                         xyz_vec_array[index, 1],
                         xyz_vec_array[index, 2],
                         color=color,
-                        length=2,
+                        length=arrow_length,
                         normalize=True,
                     )
             else:
@@ -963,12 +1214,12 @@ def add_3d_axes_to_plot(point, xyz_vec_array, color_sequence=None):
                         xyz_vec_array[index, 1],
                         xyz_vec_array[index, 2],
                         color=color,
-                        length=2,
+                        length=arrow_length,
                         normalize=True,
                     )
 
 
-def add_vector_to_plot(point, xyz_vec_array, color):
+def add_vector_to_plot(point, xyz_vec_array, color, arrow_length=2):
     # Access the current figure and cycle through each axis
     fig = plt.gcf()
     for ax in fig.get_axes():
@@ -982,7 +1233,7 @@ def add_vector_to_plot(point, xyz_vec_array, color):
                 xyz_vec_array[1],
                 xyz_vec_array[2],
                 color=color,
-                length=2,
+                length=arrow_length,
                 normalize=True,
             )
 
@@ -1041,6 +1292,95 @@ def transform_to_xy_plane(points):
     return rotation
 
 
+def sofast_plotting(output_directory, solution_set):
+    dir_save_cur = os.path.join(output_directory, "lookfast_processed_data")
+    ft.create_directories_if_necessary(dir_save_cur)
+
+    coords_centroid = np.mean(np.array(solution_set["coords"]), axis=0)
+    centered_coords = np.array(solution_set["coords"]) - coords_centroid
+    coords_centroid = np.mean(centered_coords, axis=0)
+    coords_max = np.max(centered_coords, axis=0)
+    coords_min = np.min(centered_coords, axis=0)
+
+    expected_facet_corners = Vxy(
+        list(
+            zip(
+                [coords_max[0], coords_max[1]],
+                [coords_min[0], coords_max[1]],
+                [coords_min[0], coords_min[1]],
+                [coords_max[1], coords_min[1]],
+            )
+        ),
+        dtype=float,
+    )  # Counterclockwise Starting from Top Right Corner in [row, column] SOFAST Example uses this convention
+
+    loop = LoopXY.from_vertices(expected_facet_corners)
+    region = RegionXY(loop)
+
+    # Get measured and reference optics
+    # mirror_measured = sofast.get_optic().mirror.no_parent_copy()
+    mirror_measured = MirrorPoint(
+        surface_points=Pxyz(centered_coords.T),
+        normal_vectors=Uxyz(solution_set["slopes"].T),
+        shape=region,
+        interpolation_type="nearest",
+    )
+
+    mirror_reference = MirrorParametric.generate_symmetric_paraboloid(100, mirror_measured.region)
+
+    # Save optic objects
+    plots = StandardPlotOutput()
+    plots.optic_measured = mirror_measured  # MirrorPoint object
+    plots.optic_reference = mirror_reference
+
+    plots.options_file_output.to_save = True
+    plots.options_file_output.number_in_name = False
+    plots.options_file_output.output_dir = dir_save_cur
+    plots.options_file_output.save_dpi = 200
+    plots.options_file_output.save_format = "png"
+    plots.options_file_output.close_after_save = True
+
+    # Update visualization parameters
+    plots.options_slope_vis.to_plot = True
+    plots.options_slope_vis.clim = 7
+    plots.options_slope_vis.resolution = 0.01
+    plots.options_slope_vis.quiver_density = 0.05
+    plots.options_slope_vis.quiver_scale = 15
+    plots.options_slope_vis.quiver_color = "white"
+
+    plots.options_slope_deviation_vis.to_plot = True
+    plots.options_slope_deviation_vis.clim = 1.5
+    plots.options_slope_deviation_vis.resolution = 0.01
+    plots.options_slope_deviation_vis.quiver_density = 0.05
+    plots.options_slope_deviation_vis.quiver_scale = 15
+    plots.options_slope_deviation_vis.quiver_color = "white"
+
+    plots.options_curvature_vis.to_plot = True
+    plots.options_curvature_vis.clim = 50
+    plots.options_curvature_vis.resolution = 0.001
+    # plots.options_curvature_vis.processing = # Leave Default for now
+    plots.options_curvature_vis.smooth_kernel_width = 1
+
+    plots.options_ray_trace_vis.to_plot = True
+    plots.options_ray_trace_vis.ray_trace_optic_res = 0.05
+    plots.options_ray_trace_vis.hist_bin_res = 0.07
+    plots.options_ray_trace_vis.hist_extent = 3
+    plots.options_ray_trace_vis.enclosed_energy_max_semi_width = 1
+
+    # Define viewing/illumination geometry
+    v_target_center = Vxyz((0, 0, 100))
+    v_target_normal = Vxyz((0, 0, -1))
+    source = LightSourceSun.from_given_sun_position(Uxyz((0, 0, -1)), resolution=40)
+
+    # Define ray trace parameters
+    plots.params_ray_trace.source = source
+    plots.params_ray_trace.v_target_center = v_target_center
+    plots.params_ray_trace.v_target_normal = v_target_normal
+
+    # Create standard output plots
+    plots.plot()
+
+
 def main():
     primary_folder = "//snl/Collaborative/NSTTF_Optics/Projects/_Directories/NSTTF_Optics_LookbackExEx/Experiments/2025-06_05_NsttfTunedFacetScan1dof/3_Post/DSC_0025"
     video_name = "DSC_0025.MOV"
@@ -1076,14 +1416,15 @@ def main():
     )  # Counterclockwise Starting from Bottom Left Corner in [row, column]
 
     '''
-    
     expected_corners_facet_coords_manual = Vxyz(
         list(zip([-0.606, -0.606, 0], [-0.606, 0.606, 0], [0.606, 0.606, 0], [0.606, -0.606, 0])), dtype=float
     )  # Counterclockwise Starting from Bottom Left Corner in [row, column]
     '''
+
     expected_corners_facet_coords_manual = Vxyz(
         list(zip([0.606, 0.606, 0], [-0.606, 0.606, 0], [-0.606, -0.606, 0], [0.606, -0.606, 0])), dtype=float
     )  # Counterclockwise Starting from Top Right Corner in [row, column] SOFAST Example uses this convention
+    '''
     homography_points = np.array(
         [
             [1060, 640],  # Top-right corner
@@ -1093,6 +1434,8 @@ def main():
         ],
         dtype=np.float32,
     )
+    '''
+
     v_corners_image = imgp.refine_facet_corners(
         Puv_facet_corns_exp=expected_corners_manual,
         Puv_cent=v_mask_centroid_image,
@@ -1118,6 +1461,7 @@ def main():
         intrinsic_mat=K_intrin, distortion_coef=D_coeff, image_shape_xy=tuple[1920, 1080], name="Arbitrary_Example"
     )
 
+    '''
     # Sofast Example Camera Intrinsic matrix
     K_intrin_test = np.array([[61.4, 0, 1920 / 2], [0, 72.2, 1080 / 2], [0, 0, 1]])
     # Sofast Example Camera Distortion coefficients
@@ -1126,19 +1470,22 @@ def main():
     cam2 = Camera(
         intrinsic_mat=K_intrin_test, distortion_coef=D_coeff_test, image_shape_xy=tuple[1920, 1080], name="Zoom_Test"
     )
+    '''
 
     r_optic_cam_refine_1, v_cam_optic_cam_refine_1 = sp.calc_rt_from_img_pts(
         pts_image=v_corners_image.vertices, pts_object=expected_corners_facet_coords_manual, camera=cam
     )
+    '''
     perspective_matrix = cv2.findHomography(
         srcPoints=v_corners_image.vertices.data.T.astype(np.float32), dstPoints=homography_points
     )
     warped_image = cv2.warpPerspective(mask_image, perspective_matrix[0], (1920, 1080))
     # cv2.imshow("Original", mask_image)
     # cv2.imshow("Warped", warped_image)
+    '''
 
     pixel_pointing = imgp.calculate_active_pixels_vectors(mask=all_pixels, camera=cam)
-    pixel_pointing_2 = imgp.calculate_active_pixels_vectors(mask=all_pixels, camera=cam2)
+    # pixel_pointing_2 = imgp.calculate_active_pixels_vectors(mask=all_pixels, camera=cam2)
 
     central_pixel_vector = pixel_pointing[
         int((light_image.shape[0] / 2) * light_image.shape[1]) + int(light_image.shape[1] / 2)
@@ -1155,6 +1502,7 @@ def main():
         pixel_pointing[int((light_image.shape[0] - 1) * light_image.shape[1] + light_image.shape[1] / 2)],
         pixel_pointing[int((light_image.shape[0] - 1) * light_image.shape[1] + light_image.shape[1]) - 1],
     ]
+    '''
     pyramid_pixel_vectors_2 = [
         pixel_pointing_2[int(0 * light_image.shape[1] + 0)],
         pixel_pointing_2[int(0 * light_image.shape[1] + light_image.shape[1] / 2)],
@@ -1166,6 +1514,7 @@ def main():
         pixel_pointing_2[int((light_image.shape[0] - 1) * light_image.shape[1] + light_image.shape[1] / 2)],
         pixel_pointing_2[int((light_image.shape[0] - 1) * light_image.shape[1] + light_image.shape[1]) - 1],
     ]
+    '''
 
     cam_x_axis = Uxyz(np.array([1, 0, 0]))
     cam_y_axis = Uxyz(np.array([0, 1, 0]))
@@ -1376,6 +1725,7 @@ def main():
                     label=None,
                 )
 
+        '''
         for index, vec in enumerate(pyramid_pixel_vectors_2):
             if index == 0:
                 ax.quiver(
@@ -1401,6 +1751,7 @@ def main():
                     color="midnightblue",
                     label=None,
                 )
+        '''
 
         ax.set_xlabel('X-axis')
         ax.set_ylabel('Y-axis')
@@ -1456,8 +1807,10 @@ def main():
 
         # plot_heat_maps_horizonal_looking_up(vector_data)
         # plot_pixel_camera_and_mirror_coords(vector_data)
-        plot_heat_maps_camera_looking_up_coords(vector_data)
-        plot_heat_maps_mirror_looking_up_coords(vector_data)
+        # plot_heat_maps_camera_looking_up_coords(vector_data)
+        plot_heat_maps_mirror_looking_up_coords(
+            vector_data, output_dir=os.path.join(primary_folder, "9_sofast_data_compare"), debug_plots=False
+        )
         plot_slope_heat_maps_horizonal(data_dict=vector_data)
         # plot_slope_heat_maps_camera(data_dict=vector_data)
         # plot_slope_heat_maps_mirror(data_dict=vector_data)

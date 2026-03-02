@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 from scipy.optimize import minimize
 from scipy.spatial.transform import Rotation
+from scipy.spatial import ConvexHull
 from scipy.interpolate import griddata
 import ast
 
@@ -767,7 +768,7 @@ def plot_heat_maps_radians(x_coords, y_coords, slopes, best_slope, set_label):
     # plt.show()
 
 
-def plot_scatter_heat_map(coordinates, slopes, set_label):
+def plot_scatter_heat_map(coordinates, slopes, set_label, view_tup=None):
 
     x_coords = coordinates[:, 0]
     y_coords = coordinates[:, 1]
@@ -805,6 +806,11 @@ def plot_scatter_heat_map(coordinates, slopes, set_label):
     ax3.set_ylabel('Y Coordinate')
     ax3.set_zlabel('Z Coordinate')
     fig.colorbar(scatter_z, ax=ax3)
+
+    if view_tup:
+        ax1.view_init(elev=view_tup[0], azim=view_tup[1])
+        ax2.view_init(elev=view_tup[0], azim=view_tup[1])
+        ax3.view_init(elev=view_tup[0], azim=view_tup[1])
 
     # Adjust layout
     plt.tight_layout()
@@ -1131,8 +1137,11 @@ def plot_heat_maps_mirror_looking_up_coords(vector_data, output_dir, debug_plots
     M_coords_xy_align_2 = x_align_rot_obj_2.apply(M_coords_xy_2)
     # M_slopes_xy_align_2 = x_align_rot_obj_2.apply(M_slopes_xy_2)
     M_slopes_xy_align_2 = x_align_rot_obj_2.apply(M_slope_look_axis_2)
+
     if debug_plots:
-        plot_scatter_heat_map(M_coords_xy_align_1, M_slopes_xy_align_1, "Set 1 Mirror XY Plane Aligned")
+        plot_scatter_heat_map(
+            M_coords_xy_align_1, M_slopes_xy_align_1, "Set 1 Mirror XY Plane Aligned", view_tup=(90, 270)
+        )
         add_3d_axes_to_plot(M_coords_xy_align_1[0], M_xyz_axis)
         add_3d_axes_to_plot(
             M_coords_xy_align_1[0], M_xyz_axis_rrr_1, color_sequence=["black", "gray", "purple"], arrow_length=3
@@ -1144,20 +1153,43 @@ def plot_heat_maps_mirror_looking_up_coords(vector_data, output_dir, debug_plots
             M_coords_xy_align_2[0], M_xyz_axis_rrr_2, color_sequence=["black", "gray", "purple"], arrow_length=3
         )
 
+    final_xy_align_rot_obj_1 = axis_aligned_mirror_points(M_coords_xy_align_1, angular_tol=0.5, step_size=0.002)
+    final_xy_align_rot_obj_2 = axis_aligned_mirror_points(M_coords_xy_align_2, angular_tol=0.5, step_size=0.002)
+
+    M_coords_xy_final_1 = final_xy_align_rot_obj_1.apply(M_coords_xy_align_1)
+    M_slopes_xy_final_1 = final_xy_align_rot_obj_1.apply(M_slopes_xy_align_1)
+
+    M_coords_xy_final_2 = final_xy_align_rot_obj_2.apply(M_coords_xy_align_2)
+    M_slopes_xy_final_2 = final_xy_align_rot_obj_2.apply(M_slopes_xy_align_2)
+
+    if debug_plots:
+        plot_scatter_heat_map(
+            M_coords_xy_final_1, M_slopes_xy_final_1, "Set 1 Mirror XY Aligned Final", view_tup=(90, 270)
+        )
+        plot_scatter_heat_map(
+            M_coords_xy_final_2, M_slopes_xy_final_2, "Set 2 Mirror XY Aligned Final", view_tup=(90, 270)
+        )
+
     set_1_results = {
-        "slopes_rotation_combined": x_align_rot_obj_1 * M_look_axis_rot_1,
-        "coords_rotation_combined": x_align_rot_obj_1 * M_coords_xy_rot_1 * M_look_axis_rot_1,
+        "slopes_rotation_combined": final_xy_align_rot_obj_1 * x_align_rot_obj_1 * M_look_axis_rot_1,
+        "coords_rotation_combined": final_xy_align_rot_obj_1
+        * x_align_rot_obj_1
+        * M_coords_xy_rot_1
+        * M_look_axis_rot_1,
         "coords_translation_combined": M_coords_look_axis_1_translate,
-        "coords": M_coords_xy_align_1,
-        "slopes": M_slopes_xy_align_1,
+        "coords": M_coords_xy_final_1,
+        "slopes": M_slopes_xy_final_1,
     }
 
     set_2_results = {
-        "slopes_rotation_combined": x_align_rot_obj_2 * M_look_axis_rot_2,
-        "coords_rotation_combined": x_align_rot_obj_2 * M_coords_xy_rot_2 * M_look_axis_rot_2,
+        "slopes_rotation_combined": final_xy_align_rot_obj_2 * x_align_rot_obj_2 * M_look_axis_rot_2,
+        "coords_rotation_combined": final_xy_align_rot_obj_2
+        * x_align_rot_obj_2
+        * M_coords_xy_rot_2
+        * M_look_axis_rot_2,
         "coords_translation_combined": M_coords_look_axis_2_translate,
-        "coords": M_coords_xy_align_2,
-        "slopes": M_slopes_xy_align_2,
+        "coords": M_coords_xy_final_2,
+        "slopes": M_slopes_xy_final_2,
     }
     # Calculate the convex hull of points, force rectangle, then axis align again.
     sofast_plotting(output_directory=os.path.join(output_dir, "set_1"), solution_set=set_1_results)
@@ -1292,6 +1324,75 @@ def transform_to_xy_plane(points):
     return rotation
 
 
+def axis_aligned_mirror_points(points_xyz, angular_tol, step_size):
+    points_og = np.array(points_xyz)
+    points_og_xy = np.array(points_og[:, 0:2])
+
+    rect = cv2.minAreaRect(np.float32(points_og_xy))
+    box = cv2.boxPoints(rect)
+    # In test, points of box came out in CCW starting with the top left
+
+    vec_v_1 = box[0] - box[1]
+    vec_v_2 = box[3] - box[2]
+
+    vec_h_1 = box[2] - box[1]
+    vec_h_2 = box[3] - box[0]
+
+    rot_obj_v_1, _ = rotation_matrix_scipy(np.append(vec_v_1, 0), np.array([0, 1, 0]))
+    rot_obj_v_2, _ = rotation_matrix_scipy(np.append(vec_v_2, 0), np.array([0, 1, 0]))
+    rot_obj_h_1, _ = rotation_matrix_scipy(np.append(vec_h_1, 0), np.array([1, 0, 0]))
+    rot_obj_h_2, _ = rotation_matrix_scipy(np.append(vec_h_2, 0), np.array([1, 0, 0]))
+
+    obj_list = [rot_obj_v_1, rot_obj_v_2, rot_obj_h_1, rot_obj_h_2]
+    min_rot = None
+    test_pts = np.empty_like(points_og)
+    for index, thing in enumerate(obj_list):
+        test_pts = thing.apply(points_og)
+        rect_test = cv2.minAreaRect(np.float32(test_pts[:, 0:2]))
+
+        if min_rot is None:
+            min_rot = (rect_test[2], index)
+        else:
+            if rect_test[2] < min_rot[0]:
+                min_rot = (rect_test[2], index)
+
+    rot_angle = min_rot[0]
+    refine_obj = obj_list[min_rot[1]]
+    foo = refine_obj.as_rotvec()
+    while abs(rot_angle) > angular_tol:
+
+        foo_up = np.array([foo[0], foo[1], foo[2] + step_size])
+        foo_down = np.array([foo[0], foo[1], foo[2] - step_size])
+
+        foo_up = Rotation.from_rotvec(foo_up)
+        foo_down = Rotation.from_rotvec(foo_down)
+
+        refine_up = foo_up.apply(points_og)
+        refine_down = foo_down.apply(points_og)
+
+        refine_up_rect = cv2.minAreaRect(np.float32(refine_up[:, 0:2]))
+        refine_down_rect = cv2.minAreaRect(np.float32(refine_down[:, 0:2]))
+
+        min_index = np.argmin(np.array([abs(refine_up_rect[2]), abs(refine_down_rect[2])]))
+
+        if min_index == 0:
+            rot_angle = refine_up_rect[2]
+            foo = foo_up
+        elif min_index == 1:
+            rot_angle = refine_down_rect[2]
+            foo = foo_down
+        else:
+            break
+
+    if isinstance(foo, np.ndarray):
+        rot_obj = Rotation.from_rotvec(foo)
+        return rot_obj
+    elif isinstance(foo, Rotation):
+        return foo
+    else:
+        raise ValueError("Output was not the correct data type... Need to Debug")
+
+
 def sofast_plotting(output_directory, solution_set):
     dir_save_cur = os.path.join(output_directory, "lookfast_processed_data")
     ft.create_directories_if_necessary(dir_save_cur)
@@ -1299,6 +1400,14 @@ def sofast_plotting(output_directory, solution_set):
     coords_centroid = np.mean(np.array(solution_set["coords"]), axis=0)
     centered_coords = np.array(solution_set["coords"]) - coords_centroid
     coords_centroid = np.mean(centered_coords, axis=0)
+
+    rect = cv2.minAreaRect(np.float32(centered_coords[:, 0:2]))
+    box = cv2.boxPoints(rect)  # In test, points of box came out in CCW starting with the top left
+
+    expected_facet_corners = Vxy(
+        list(zip(box[3], box[2], box[1], box[0])), dtype=float
+    )  # Counterclockwise Starting from Top Right Corner in [row, column] SOFAST Example uses this convention
+    '''
     coords_max = np.max(centered_coords, axis=0)
     coords_min = np.min(centered_coords, axis=0)
 
@@ -1313,6 +1422,7 @@ def sofast_plotting(output_directory, solution_set):
         ),
         dtype=float,
     )  # Counterclockwise Starting from Top Right Corner in [row, column] SOFAST Example uses this convention
+    '''
 
     loop = LoopXY.from_vertices(expected_facet_corners)
     region = RegionXY(loop)
@@ -1342,17 +1452,17 @@ def sofast_plotting(output_directory, solution_set):
 
     # Update visualization parameters
     plots.options_slope_vis.to_plot = True
-    plots.options_slope_vis.clim = 7
+    plots.options_slope_vis.clim = 20
     plots.options_slope_vis.resolution = 0.01
-    plots.options_slope_vis.quiver_density = 0.05
-    plots.options_slope_vis.quiver_scale = 15
+    plots.options_slope_vis.quiver_density = None  # default 0.1
+    plots.options_slope_vis.quiver_scale = 3
     plots.options_slope_vis.quiver_color = "white"
 
     plots.options_slope_deviation_vis.to_plot = True
     plots.options_slope_deviation_vis.clim = 1.5
     plots.options_slope_deviation_vis.resolution = 0.01
-    plots.options_slope_deviation_vis.quiver_density = 0.05
-    plots.options_slope_deviation_vis.quiver_scale = 15
+    plots.options_slope_deviation_vis.quiver_density = None  # default 0.1
+    plots.options_slope_deviation_vis.quiver_scale = 3
     plots.options_slope_deviation_vis.quiver_color = "white"
 
     plots.options_curvature_vis.to_plot = True
@@ -1811,7 +1921,7 @@ def main():
         plot_heat_maps_mirror_looking_up_coords(
             vector_data, output_dir=os.path.join(primary_folder, "9_sofast_data_compare"), debug_plots=False
         )
-        plot_slope_heat_maps_horizonal(data_dict=vector_data)
+        # plot_slope_heat_maps_horizonal(data_dict=vector_data)
         # plot_slope_heat_maps_camera(data_dict=vector_data)
         # plot_slope_heat_maps_mirror(data_dict=vector_data)
         print("done")

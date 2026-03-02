@@ -87,7 +87,7 @@ def compile_binary_maps(output_folder, threshold_fractions, prefix):
         batch_files = [
             os.path.join(output_folder, f)
             for f in os.listdir(output_folder)
-            if f.startswith(f"{prefix}_binary_map_{int(threshold_fraction * 100)}")
+            if f.startswith(f"{prefix}_binary_map_{int(threshold_fraction * 100):02d}")
         ]
 
         # Combine all batch files
@@ -102,7 +102,9 @@ def compile_binary_maps(output_folder, threshold_fractions, prefix):
         compiled_binary_maps[threshold_fraction] = compiled_map
 
         # Save the compiled map to disk
-        output_path = os.path.join(output_folder, f"{prefix}_compiled_binary_map_{int(threshold_fraction * 100)}.png")
+        output_path = os.path.join(
+            output_folder, f"{prefix}_compiled_binary_map_{int(threshold_fraction * 100):02d}.png"
+        )
         imageio.imwrite(output_path, compiled_map * 255)  # Scale binary map to 0-255 for saving as an image
         print(f"Compiled binary map for threshold {threshold_fraction} saved to {output_path}")
 
@@ -129,7 +131,7 @@ def process_images_in_batches(
     first_image = imageio.imread(image_files[0]) if not is_raw else rawpy.imread(image_files[0]).postprocess()
     binary_maps = {
         threshold: np.memmap(
-            os.path.join(output_folder, f"{prefix}_binary_map_{int(threshold * 100)}_{batch_num}.dat"),
+            os.path.join(output_folder, f"{prefix}_binary_map_{int(threshold * 100):02d}_{batch_num}.png"),
             dtype=bool,
             mode="w+",
             shape=(first_image.shape[0], first_image.shape[1]),
@@ -170,7 +172,7 @@ def process_images_in_batches(
     # Save binary maps for the batch
     for threshold_fraction, binary_map in binary_maps.items():
         output_path = os.path.join(
-            output_folder, f"{prefix}_binary_map_{int(threshold_fraction * 100)}_{batch_num}.png"
+            output_folder, f"{prefix}_binary_map_{int(threshold_fraction * 100):02d}_{batch_num}.png"
         )
         bin_image = (binary_map * 255).astype('uint8')
         image = Image.fromarray(bin_image)

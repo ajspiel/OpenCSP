@@ -325,7 +325,7 @@ def save_batch_to_npz(batch_data, output_path):
         data_dict = {item["image_name"]: np.array(item["binary_array"], dtype=np.uint8) for item in batch_data}
 
         # Save data to .npz format
-        np.savez_compressed(output_path, **data_dict)
+        np.savez_compressed(output_path, allow_pickle=True, **data_dict)
         logger.info("Batch data saved successfully to: %s", output_path)
         print()
     except Exception as e:

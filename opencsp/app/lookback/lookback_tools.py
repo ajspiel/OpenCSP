@@ -69,6 +69,34 @@ def frame_number_from_img_name(image_name_str):
     return int(frame)
 
 
+def lat_long_to_decimal(input):
+    decimal = input[0] + input[1] / 60 + input[2] / 3600
+    return decimal
+
+
+def define_observation_time_skyfield(source_time, time_offset):
+    source_time = source_time + time_offset
+    observation_time = source_time.astimezone(timezone.utc)
+    # Define observation time
+    ts = skf.load.timescale()
+    if isinstance(observation_time, skf.Time):
+        pass
+    elif isinstance(observation_time, datetime):
+        # Extract components from the datetime object
+        observation_time = ts.utc(
+            observation_time.year,
+            observation_time.month,
+            observation_time.day,
+            observation_time.hour,
+            observation_time.minute,
+            observation_time.second,
+        )
+    else:
+        # If observation_time is already a tuple, unpack it directly
+        observation_time = ts.utc(*observation_time)
+    return observation_time
+
+
 def save_checkpoint(checkpoint_folder, checkpoint_file_name, checkpoint_data, print_path=True):
     """
     Saves the checkpoint data to a JSON file.

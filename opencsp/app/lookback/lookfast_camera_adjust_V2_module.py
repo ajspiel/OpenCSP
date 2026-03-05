@@ -1498,16 +1498,56 @@ def main():
     checkpoint_main_name = "lookback_main_checkpoint.json"
 
     plotting = True
+    function_testing = True
 
+    ##### Setting camera object
+    # Sofast Example Camera Intrinsic matrix
+    K_intrin = np.array([[5492.064314084441, 0, 1920 / 2], [0, 5486.2706013814895, 1080 / 2], [0, 0, 1]])
+    # Sofast Example Camera Distortion coefficients
+    D_coeff = np.array([-0.144160742602367, 1.609744377391114, 2.503498158416561e-5, -0.001899042260179])
+
+    cam = Camera(
+        intrinsic_mat=K_intrin, distortion_coef=D_coeff, image_shape_xy=tuple[1920, 1080], name="Arbitrary_Example"
+    )
+
+    ##### reading in vector data
     original_data_location = "//snl/Collaborative/NSTTF_Optics/Projects/_Directories/NSTTF_Optics_LookbackExEx/Experiments/2025-06_05_NsttfTunedFacetScan1dof/3_Post/DSC_0025_Final_ExEx/8_pixel_vector_information/debug/pixel_vector_information_wslope_debug.json.gz"
     vector_data = lbt.read_compressed_json(original_data_location)
 
-    video_metadata = lbt.extract_detailed_video_metadata(os.path.join(primary_folder, video_name))
+    ##### pick arbitraty pixel for a horizon reference vector
+    reference_vector_horizon = Uxyz(vector_data["(500, 900)"]["observer_vector"] * -1)
+    reference_vector_horizon_camera = Uxyz(
+        [reference_vector_horizon.x[0], reference_vector_horizon.z[0] * -1, reference_vector_horizon.y[0]]
+    )
 
+    ##### reading in masks for light, dark, and all pixels
     light_image = cv2.imread(os.path.join(primary_folder, "light_mask_test.png"), cv2.IMREAD_GRAYSCALE)
     dark_image = cv2.imread(os.path.join(primary_folder, "dark_mask_test.png"), cv2.IMREAD_GRAYSCALE)
     all_pixels = np.ones(shape=light_image.shape, dtype=bool)
 
+    ##### calculate pixel pointing vectors for all pixels
+    pixel_pointing = imgp.calculate_active_pixels_vectors(mask=all_pixels, camera=cam)
+    # pixel_pointing_2 = imgp.calculate_active_pixels_vectors(mask=all_pixels, camera=cam2)
+
+    ##### central pixel vector (with better camera model needs to pick optical axis not just the center)
+    central_pixel_vector = pixel_pointing[
+        int((light_image.shape[0] / 2) * light_image.shape[1]) + int(light_image.shape[1] / 2)
+    ]
+
+    ##### assigning 9 pixel pointing vectors as the corners, edge midpoints and center to show camera model alignment
+    pyramid_pixel_vectors = [
+        pixel_pointing[int(0 * light_image.shape[1] + 0)],
+        pixel_pointing[int(0 * light_image.shape[1] + light_image.shape[1] / 2)],
+        pixel_pointing[int(0 * light_image.shape[1] + light_image.shape[1]) - 1],
+        pixel_pointing[int((light_image.shape[0] / 2) * light_image.shape[1] + 0)],
+        pixel_pointing[int((light_image.shape[0] / 2) * light_image.shape[1] + light_image.shape[1] / 2)],
+        pixel_pointing[int((light_image.shape[0] / 2) * light_image.shape[1] + light_image.shape[1]) - 1],
+        pixel_pointing[int((light_image.shape[0] - 1) * light_image.shape[1] + 0)],
+        pixel_pointing[int((light_image.shape[0] - 1) * light_image.shape[1] + light_image.shape[1] / 2)],
+        pixel_pointing[int((light_image.shape[0] - 1) * light_image.shape[1] + light_image.shape[1]) - 1],
+    ]
+
+    ##### setting initial mask location
     mask_raw = imgp.calc_mask_raw(
         np.concatenate((dark_image[:, :, np.newaxis], light_image[:, :, np.newaxis]), axis=2),
         hist_thresh=0.5,
@@ -1521,31 +1561,17 @@ def main():
 
     mask_image = mask.astype(np.uint8) * 255
 
+    ##### setting expected corners
     expected_corners_manual = Vxy(
         list(zip([860, 444], [840, 643], [1047, 657], [1062, 455])), dtype=int
     )  # Counterclockwise Starting from Bottom Left Corner in [row, column]
 
-    '''
-    expected_corners_facet_coords_manual = Vxyz(
-        list(zip([-0.606, -0.606, 0], [-0.606, 0.606, 0], [0.606, 0.606, 0], [0.606, -0.606, 0])), dtype=float
-    )  # Counterclockwise Starting from Bottom Left Corner in [row, column]
-    '''
-
+    ##### setting expected corners in mirror coordinates
     expected_corners_facet_coords_manual = Vxyz(
         list(zip([0.606, 0.606, 0], [-0.606, 0.606, 0], [-0.606, -0.606, 0], [0.606, -0.606, 0])), dtype=float
     )  # Counterclockwise Starting from Top Right Corner in [row, column] SOFAST Example uses this convention
-    '''
-    homography_points = np.array(
-        [
-            [1060, 640],  # Top-right corner
-            [860, 640],  # Top-left corner
-            [860, 440],  # Bottom-left corner
-            [1060, 440],  # Bottom-right corner
-        ],
-        dtype=np.float32,
-    )
-    '''
 
+    ##### refine corners
     v_corners_image = imgp.refine_facet_corners(
         Puv_facet_corns_exp=expected_corners_manual,
         Puv_cent=v_mask_centroid_image,
@@ -1555,106 +1581,31 @@ def main():
         frac_keep=1,
     )
 
-    '''
-    # Arbitrary Camera Intrinsic matrix
-    K_intrin = np.array([[1, 0, 1920 / 2], [0, 1, 1080 / 2], [0, 0, 1]])
-    # Distortion coefficients
-    D_coeff = np.array([1, 1, 1, 1])
-    '''
-
-    # Sofast Example Camera Intrinsic matrix
-    K_intrin = np.array([[5492.064314084441, 0, 1920 / 2], [0, 5486.2706013814895, 1080 / 2], [0, 0, 1]])
-    # Sofast Example Camera Distortion coefficients
-    D_coeff = np.array([-0.144160742602367, 1.609744377391114, 2.503498158416561e-5, -0.001899042260179])
-
-    cam = Camera(
-        intrinsic_mat=K_intrin, distortion_coef=D_coeff, image_shape_xy=tuple[1920, 1080], name="Arbitrary_Example"
-    )
-
-    '''
-    # Sofast Example Camera Intrinsic matrix
-    K_intrin_test = np.array([[61.4, 0, 1920 / 2], [0, 72.2, 1080 / 2], [0, 0, 1]])
-    # Sofast Example Camera Distortion coefficients
-    D_coeff_test = np.array([-0.144160742602367, 1.609744377391114, 2.503498158416561e-5, -0.001899042260179])
-
-    cam2 = Camera(
-        intrinsic_mat=K_intrin_test, distortion_coef=D_coeff_test, image_shape_xy=tuple[1920, 1080], name="Zoom_Test"
-    )
-    '''
-
+    ##### estimate camera pose from refined pixel corners and expected mirror coordinate corners
     r_optic_cam_refine_1, v_cam_optic_cam_refine_1 = sp.calc_rt_from_img_pts(
         pts_image=v_corners_image.vertices, pts_object=expected_corners_facet_coords_manual, camera=cam
     )
-    '''
-    perspective_matrix = cv2.findHomography(
-        srcPoints=v_corners_image.vertices.data.T.astype(np.float32), dstPoints=homography_points
+
+    ##### estimate mirror coordinates in 3D space based on pose estimation
+    vector_data = estimate_pixel_to_camera_coords_3D(
+        cam, vector_data, ref_distance=99.94392, rot_obj=r_optic_cam_refine_1, t_vec=v_cam_optic_cam_refine_1
     )
-    warped_image = cv2.warpPerspective(mask_image, perspective_matrix[0], (1920, 1080))
-    # cv2.imshow("Original", mask_image)
-    # cv2.imshow("Warped", warped_image)
-    '''
 
-    pixel_pointing = imgp.calculate_active_pixels_vectors(mask=all_pixels, camera=cam)
-    # pixel_pointing_2 = imgp.calculate_active_pixels_vectors(mask=all_pixels, camera=cam2)
-
-    central_pixel_vector = pixel_pointing[
-        int((light_image.shape[0] / 2) * light_image.shape[1]) + int(light_image.shape[1] / 2)
-    ]
-    # pixel_pointing[row * light_image.shape[1] + col
-    pyramid_pixel_vectors = [
-        pixel_pointing[int(0 * light_image.shape[1] + 0)],
-        pixel_pointing[int(0 * light_image.shape[1] + light_image.shape[1] / 2)],
-        pixel_pointing[int(0 * light_image.shape[1] + light_image.shape[1]) - 1],
-        pixel_pointing[int((light_image.shape[0] / 2) * light_image.shape[1] + 0)],
-        pixel_pointing[int((light_image.shape[0] / 2) * light_image.shape[1] + light_image.shape[1] / 2)],
-        pixel_pointing[int((light_image.shape[0] / 2) * light_image.shape[1] + light_image.shape[1]) - 1],
-        pixel_pointing[int((light_image.shape[0] - 1) * light_image.shape[1] + 0)],
-        pixel_pointing[int((light_image.shape[0] - 1) * light_image.shape[1] + light_image.shape[1] / 2)],
-        pixel_pointing[int((light_image.shape[0] - 1) * light_image.shape[1] + light_image.shape[1]) - 1],
-    ]
-    '''
-    pyramid_pixel_vectors_2 = [
-        pixel_pointing_2[int(0 * light_image.shape[1] + 0)],
-        pixel_pointing_2[int(0 * light_image.shape[1] + light_image.shape[1] / 2)],
-        pixel_pointing_2[int(0 * light_image.shape[1] + light_image.shape[1]) - 1],
-        pixel_pointing_2[int((light_image.shape[0] / 2) * light_image.shape[1] + 0)],
-        pixel_pointing_2[int((light_image.shape[0] / 2) * light_image.shape[1] + light_image.shape[1] / 2)],
-        pixel_pointing_2[int((light_image.shape[0] / 2) * light_image.shape[1] + light_image.shape[1]) - 1],
-        pixel_pointing_2[int((light_image.shape[0] - 1) * light_image.shape[1] + 0)],
-        pixel_pointing_2[int((light_image.shape[0] - 1) * light_image.shape[1] + light_image.shape[1] / 2)],
-        pixel_pointing_2[int((light_image.shape[0] - 1) * light_image.shape[1] + light_image.shape[1]) - 1],
-    ]
-    '''
-
-    cam_x_axis = Uxyz(np.array([1, 0, 0]))
-    cam_y_axis = Uxyz(np.array([0, 1, 0]))
-
-    reference_vector_horizon = Uxyz(vector_data["(500, 900)"]["observer_vector"] * -1)
-    reference_vector_horizon_camera = Uxyz(
-        [reference_vector_horizon.x[0], reference_vector_horizon.z[0] * -1, reference_vector_horizon.y[0]]
-    )
-    reference_vector_horizon_cad = Uxyz(np.array([70.030, 43.086, -51.518]))
+    ##### first rotation from "optical axis pointing vector" and reference observer_to_optic_h vector
     rot_obj_no_roll, rssd = rotation_matrix_scipy(
         np.array([central_pixel_vector.x[0], central_pixel_vector.y[0], central_pixel_vector.z[0]]),
         np.array([reference_vector_horizon.x[0], reference_vector_horizon.y[0], reference_vector_horizon.z[0]]),
     )
 
+    ##### apply first rotation, resulting in an arbitrary rotation of x and y axis about cam optical axis / horizonal reference vector
+    cam_x_axis = Uxyz(np.array([1, 0, 0]))
+    cam_y_axis = Uxyz(np.array([0, 1, 0]))
     cam_xyz_t = rot_obj_no_roll.apply(
         np.array([cam_x_axis.data, cam_y_axis.data, central_pixel_vector.data]).reshape(3, 3)
     )  # The original camera vector that corresponded to the horizonal reference vectors are aligned.
 
-    test_vectors = np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1], [1, 1, 1]])
-    test_output_x = []
-    test_output_y = []
-    test_output_z = []
-    for item in test_vectors:
-        test_output_x.append(rotate_vector(item, np.array([1, 0, 0]), degrees=90))
-        test_output_y.append(rotate_vector(item, np.array([0, 1, 0]), degrees=90))
-        test_output_z.append(rotate_vector(item, np.array([0, 0, 1]), degrees=90))
-        test_output_x.append(rotate_vector(item, np.array([1, 0, 0]), degrees=45))
-        test_output_y.append(rotate_vector(item, np.array([0, 1, 0]), degrees=45))
-        test_output_z.append(rotate_vector(item, np.array([0, 0, 1]), degrees=45))
-
+    ##### binary search to find which additional rotation about rotated camera optical axis (now in horizonal coordinates)
+    ##### results in the x axis of transformed camera coordinates to have a minimal z-component. i.e. x axis of new camera coordinates in the horizonal XY plane
     roll_control_angle = binary_search_angle(
         vector=cam_xyz_t[0], axis=cam_xyz_t[2], function=rotate_vector, tolerance=1e-6, max_iterations=1000
     )
@@ -1662,14 +1613,32 @@ def main():
 
     roll_control_obj = create_rotation_object(axis=cam_xyz_t[2], angle_degrees=roll_control_angle)
 
+    ##### test first rotation for sanity check with function and output
+    if function_testing:
+
+        test_vectors = np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1], [1, 1, 1]])
+        test_output_x = []
+        test_output_y = []
+        test_output_z = []
+        for item in test_vectors:
+            test_output_x.append(rotate_vector(item, np.array([1, 0, 0]), degrees=90))
+            test_output_y.append(rotate_vector(item, np.array([0, 1, 0]), degrees=90))
+            test_output_z.append(rotate_vector(item, np.array([0, 0, 1]), degrees=90))
+            test_output_x.append(rotate_vector(item, np.array([1, 0, 0]), degrees=45))
+            test_output_y.append(rotate_vector(item, np.array([0, 1, 0]), degrees=45))
+            test_output_z.append(rotate_vector(item, np.array([0, 0, 1]), degrees=45))
+
+    ##### apply the roll control roation
     # The rotation to align the transformed camera-to-horizonal axis vectors such that direction of the x component transformed camera-to-horizonal set has a minimized z component.
     # i.e. The x component of that vector (now in the horizonal coordinate system) must lie in the plane created by the X and Y horizonal vectors (East-West and North South)
     cam_xyz_tr = roll_control_obj.apply(cam_xyz_t)
 
+    ##### combine rotation objects for camera to horizonal coordinates and camera to mirror coordinates transform
     cam_horizon_transform = roll_control_obj * rot_obj_no_roll
 
-    cam_mirror_transform = roll_control_obj * rot_obj_no_roll * r_optic_cam_refine_1  # I need to revisit this...
+    cam_horizon_pose_transform = roll_control_obj * rot_obj_no_roll * r_optic_cam_refine_1
 
+    ##### vector plot of original camera coords, first rotation applied, and roll control rotation applied
     if plotting:
         fig = plt.figure()
         ax = fig.add_subplot(111, projection='3d')
@@ -1695,16 +1664,6 @@ def main():
                 reference_vector_horizon.z[0],
                 "Horizon Reference Horz",
                 "darkorange",
-            ],
-            [
-                0,
-                0,
-                0,
-                reference_vector_horizon_cad.x[0],
-                reference_vector_horizon_cad.y[0],
-                reference_vector_horizon_cad.z[0],
-                "Horizon Reference CAD Horz",
-                "lavender",
             ],
             [
                 0,
@@ -1798,7 +1757,7 @@ def main():
                     color="olivedrab",
                     label="Untransformed Camera Vec Sample",
                 )
-                pix_pyr_t.append(cam_mirror_transform.apply(vec.data.reshape(3)))
+                pix_pyr_t.append(cam_horizon_pose_transform.apply(vec.data.reshape(3)))
                 ax.quiver(
                     0,
                     0,
@@ -1822,7 +1781,7 @@ def main():
                     color="olivedrab",
                     label=None,
                 )
-                pix_pyr_t.append(cam_mirror_transform.apply(vec.data.reshape(3)))
+                pix_pyr_t.append(cam_horizon_pose_transform.apply(vec.data.reshape(3)))
                 ax.quiver(
                     0,
                     0,
@@ -1872,10 +1831,7 @@ def main():
         ax.set_aspect('equal')
         ax.legend()
 
-    vector_data = estimate_pixel_to_camera_coords_3D(
-        cam, vector_data, ref_distance=99.94392, rot_obj=r_optic_cam_refine_1, t_vec=v_cam_optic_cam_refine_1
-    )
-
+    ##### extract data, apply sets of rotations (inverse) to convert horizonal data to camera coordinates and camera coordinates to mirror coordinates
     for pixel, details in vector_data.items():
         if isinstance(details, dict):
             if details["intersection_1"].size > 0:
@@ -1915,6 +1871,7 @@ def main():
         else:
             pass
 
+    ##### take extracted coords and slopes, rotate and align with mirror coordinate system and feed to sofast plotting
     # plot_heat_maps_horizonal_looking_up(vector_data)
     # plot_pixel_camera_and_mirror_coords(vector_data)
     # plot_heat_maps_camera_looking_up_coords(vector_data)

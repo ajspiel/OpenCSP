@@ -6,6 +6,7 @@ from tkinter import filedialog
 import re
 import numpy as np
 import cv2
+from datetime import datetime, timedelta
 
 
 import opencsp.app.sofast.lib.image_processing as imgp
@@ -15,6 +16,7 @@ from opencsp.app.lookback.interactive_video_info_extract import interactive_vide
 import opencsp.app.lookback.coverage_map_mp as cvg_map
 import opencsp.app.lookback.time_history_array_mp_npz as time_hist
 import opencsp.app.lookback.time_history_transitions_npz_mp as transitions
+import opencsp.app.lookback.celestial_vectors as astro_math
 
 from opencsp.common.lib.camera.Camera import Camera
 
@@ -179,6 +181,22 @@ def main():
     fractions = [0.01, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99]
     analysis_fractions = [0.5]
 
+    celestial_object = "sun"
+    video_metadata = lbt.extract_detailed_video_metadata(ft.join(primary_folder, og_vid_name + og_vid_ext))
+    timezone = "America/Denver"
+    camera_time_shift = timedelta(hours=0, minutes=0, seconds=0)
+    # Define observer location Example ≈NSTTF Tower 260 Level Balcony West Side
+    observer_lat = (34, 57, 44.56)  # (degree, minute, second) negative degree for south
+    observer_long = (-106, 30, 34.90)  # (degree, minute, second) negative degree for west
+    observer_elevation = 1755.648 + 1.2192
+    observer_loc = (lbt.lat_long_to_decimal(observer_lat), lbt.lat_long_to_decimal(observer_long), observer_elevation)
+
+    # Define target location Example ≈Sun Data Marker 2 In front of 5E8
+    target_lat = (34, 57, 45.92)  # (degree, minute, second) negative degree for south
+    target_long = (-106, 30, 31.88)  # (degree, minute, second) negative degree for west
+    target_elevation = 1706.88
+    target_loc = (lbt.lat_long_to_decimal(target_lat), lbt.lat_long_to_decimal(target_long), target_elevation)
+
     if "extracted_video_frames" in checkpoint_main_data["Completed_Steps"]:
         logger.info("Skipped Already Completed Video Frame Extraction : %s", str(time.time() - start_time))
         if ft.file_exists(input_dir_body_ext=ft.join(primary_folder, "interactive_scrubber_selections.json")):
@@ -327,11 +345,135 @@ def main():
             )
             logger.info("Time to Complete Timing Plots: %s", str(time.time() - start_time))
 
+    if "celestial_vectors_data" in checkpoint_main_data["Completed_Steps"]:
+        logger.info("Skipped Already Completed Celestial Vector Processing: %s", str(time.time() - start_time))
+    else:
+        for level in analysis_fractions:
+            mask_key = f"{int(level*100):02d}"
+            mask_file_path = [fp for fp in thresh_maps_paths if mask_key in os.path.basename(fp)]
+
+            if len(mask_file_path) > 1:
+                raise ValueError("Too many binary map mask files match the analysis fraction key")
+            else:
+
+                astro_math.extract_pixel_timing_and_celestial_vectors_parallel(
+                    celestial_object_name=celestial_object,
+                    target_location=target_loc,
+                    observer_location=observer_loc,
+                    camera_time_shift=camera_time_shift,
+                    data_time_zone=timezone,
+                    data_location=ft.join(
+                        primary_folder,
+                        "7_pixel_timing_interrogation",
+                        mask_key,
+                        f"time_history_transition_parallel_{mask_key}_final.json.gz",
+                    ),
+                    video_metadata=video_metadata,
+                    output_folder=ft.join(primary_folder, "8_pixel_vector_information", mask_key),
+                    output_json_name=f"celestial_vector_data_mask_{mask_key}.json.gz",
+                    checkpoint_folder=checkpoint_folder,
+                    checkpoint_file="celestial_vector_data_checkpoint_mp.json",
+                    batch_size=5000,
+                )
+
+                checkpoint_main_data["Completed_Steps"].append("celestial_vectors_data")
+                lbt.save_checkpoint(
+                    checkpoint_folder=checkpoint_folder,
+                    checkpoint_file_name=checkpoint_main_name,
+                    checkpoint_data=checkpoint_main_data,
+                )
+                logger.info("Time to Complete Celestial Vector Calculations: %s", str(time.time() - start_time))
+
+    if "celestial_vectors_plots" in checkpoint_main_data["Completed_Steps"]:
+        logger.info("Skipped Already Completed Celestial Vector Plotting: %s", str(time.time() - start_time))
+    else:
+        for level in analysis_fractions:
+            mask_key = f"{int(level*100):02d}"
+            mask_file_path = [fp for fp in thresh_maps_paths if mask_key in os.path.basename(fp)]
+
+            if len(mask_file_path) > 1:
+                raise ValueError("Too many binary map mask files match the analysis fraction key")
+            else:
+
+                astro_math.plotting_pixel_transition_vectors_decoupled_mp(
+                    data_location=ft.join(
+                        primary_folder,
+                        "8_pixel_vector_information",
+                        mask_key,
+                        f"celestial_vector_data_mask_{mask_key}.json.gz",
+                    ),
+                    checkpoint_folder=checkpoint_folder,
+                    checkpoint_data_file="celestial_vector_data_checkpoint_mp.json",
+                    checkpoint_plot_file="celestial_vector_plots_checkpoint_mp.json",
+                    celestial_object=celestial_object,
+                    output_folder_img=ft.join(
+                        primary_folder, "8_pixel_vector_information", mask_key, "celestial_vector_plots"
+                    ),
+                    batch_size=1000,
+                )
+
+                checkpoint_main_data["Completed_Steps"].append("celestial_vectors_plots")
+                lbt.save_checkpoint(
+                    checkpoint_folder=checkpoint_folder,
+                    checkpoint_file_name=checkpoint_main_name,
+                    checkpoint_data=checkpoint_main_data,
+                )
+                logger.info("Time to Complete Celestial Vector Plots: %s", str(time.time() - start_time))
+
+    if "lookfast_camera_adjust" in checkpoint_main_data["Completed_Steps"]:
+        logger.info("Skipped Already Completed Lookfast Camera Adjustments: %s", str(time.time() - start_time))
+    else:
+        for level in analysis_fractions:
+            mask_key = f"{int(level*100):02d}"
+            mask_file_path = [fp for fp in thresh_maps_paths if mask_key in os.path.basename(fp)]
+
+            if len(mask_file_path) > 1:
+                raise ValueError("Too many binary map mask files match the analysis fraction key")
+            else:
+
+                '''
+                module code steps:
+                read in camera params to make camera object
+                read in celestial vector data
+                pick arbitraty pixel for a horizon reference vector
+                read in masks for light, dark, and all_pixels image
+                calculate pixel pointing vectors for all pixels
+                set mask location with OpenCSP code
+                set expected corners in pixel coords
+                set expected corners in mirror coords
+                refine OpenCSP corners
+                Estimate camera pose from refined pixel corners and provided mirror coords
+                estimate mirror coordinates in 3D space based on pose estimation
+                first rotation from "optical axis pointing vector" and reference observer_to_optic_h vector
+                apply first rotation, resulting in an arbitrary rotation of x and y axis about cam optical axis / horizonal reference vector
+                binary search to find which additional rotation about rotated camera optical axis (now in horizonal coordinates)
+                    results in the x axis of transformed camera coordinates to have a minimal z-component. i.e. x axis of new camera coordinates in the horizonal XY plane
+                test first rotation for sanity check with function and output
+                apply the roll control rotation
+                vector plot of original camera coords, first rotation applied, and roll control rotation applied
+                extract data, apply sets of rotations (inverse) to convert horizonal data to camera coordinates and camera coordinates to mirror coordinates (coords, and slopes)
+                take extracted coords and slopes, rotate and align with mirror coordinate system and feed to sofast plotting
+
+                Inputs:
+                checkpoint_folder - need to use
+                checkpoint_name - need to use
+                compiled_celestial_data_path
+                output_data_path
+                output_plot_path
+                OpenCSP Camera Object
+                pixel_location_optical_axis
+                light mask
+                    dark mask -> zeros
+                    all_pixels -> from light mask
+                    identify expected corners from light mask???
+                OpenCSP reference mirror definition
+
+
+                '''
+
     print("here")
-    # Need Celestial Vectors Section
     # Need Lookfast camera adjust v2 section
 
 
 if __name__ == "__main__":
     main()
-    # TODO Align Data structure with SOFAST Back END

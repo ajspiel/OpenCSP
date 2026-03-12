@@ -1492,7 +1492,7 @@ def sofast_plotting(output_directory, solution_set):
 
 
 def main():
-    primary_folder = "//snl/Collaborative/NSTTF_Optics/Projects/_Directories/NSTTF_Optics_LookbackExEx/Experiments/2025-06_05_NsttfTunedFacetScan1dof/3_Post/DSC_0025"
+    primary_folder = "//snl/Collaborative/NSTTF_Optics/Projects/_Directories/NSTTF_Optics_LookbackExEx/Experiments/2025-06_05_NsttfTunedFacetScan1dof/3_Post/DSC_0025_lookfast"
     video_name = "DSC_0025.MOV"
     checkpoint_folder = os.path.join(primary_folder, "0_checkpoints")
     checkpoint_main_name = "lookback_main_checkpoint.json"

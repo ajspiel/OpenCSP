@@ -17,6 +17,7 @@ import opencsp.app.lookback.coverage_map_mp as cvg_map
 import opencsp.app.lookback.time_history_array_mp_npz as time_hist
 import opencsp.app.lookback.time_history_transitions_npz_mp as transitions
 import opencsp.app.lookback.celestial_vectors as astro_math
+import opencsp.app.lookback.lookfast_camera_adjust_V2_module as rt_cam_adjust
 
 from opencsp.common.lib.camera.Camera import Camera
 
@@ -178,7 +179,8 @@ def main():
     start_time = time.time()
     logger.info("Code Start Time: %s", str(time.ctime(start_time)))
 
-    fractions = [0.01, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99]
+    # fractions = [0.01, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99]
+    fractions = [0.5]
     analysis_fractions = [0.5]
 
     celestial_object = "sun"
@@ -196,6 +198,23 @@ def main():
     target_long = (-106, 30, 31.88)  # (degree, minute, second) negative degree for west
     target_elevation = 1706.88
     target_loc = (lbt.lat_long_to_decimal(target_lat), lbt.lat_long_to_decimal(target_long), target_elevation)
+
+    # TODO Need to change this to load in a camera object
+    ##### Setting camera object
+
+    # Sofast Example Camera Intrinsic matrix
+    K_intrin = np.array([[5492.064314084441, 0, 1920 / 2], [0, 5486.2706013814895, 1080 / 2], [0, 0, 1]])
+    # Sofast Example Camera Distortion coefficients
+    D_coeff = np.array([-0.144160742602367, 1.609744377391114, 2.503498158416561e-5, -0.001899042260179])
+
+    cam = Camera(
+        intrinsic_mat=K_intrin, distortion_coef=D_coeff, image_shape_xy=tuple[1920, 1080], name="Arbitrary_Example"
+    )
+
+    cam_to_optic_reference_distance = 99.94392  # meters
+    # Need to select a reference pixel to align the horizonal and camera coordinate system. Should make this part of the Video Scrubber step.
+    reference_pixel_key = "(500, 900)"
+    # optical_axis_pixel_key = f"({int(K_intrin[1,2])}, {int(K_intrin[0,2])})"
 
     if "extracted_video_frames" in checkpoint_main_data["Completed_Steps"]:
         logger.info("Skipped Already Completed Video Frame Extraction : %s", str(time.time() - start_time))
@@ -286,8 +305,6 @@ def main():
             checkpoint_data=checkpoint_main_data,
         )
         logger.info("Time to Complete Time History Arrays: %s", str(time.time() - start_time))
-
-    # Insert Mask Selection Here
 
     if "pixel_transitions" in checkpoint_main_data["Completed_Steps"]:
         logger.info("Skipped Already Completed Transition History: %s", str(time.time() - start_time))
@@ -431,7 +448,34 @@ def main():
                 raise ValueError("Too many binary map mask files match the analysis fraction key")
             else:
 
+                rt_cam_adjust.main(
+                    camera_obj=cam,
+                    light_mask_path=mask_file_path[0],
+                    vec_data_path=ft.join(
+                        primary_folder,
+                        "8_pixel_vector_information",
+                        mask_key,
+                        f"celestial_vector_data_mask_{mask_key}.json.gz",
+                    ),
+                    reference_distance_m=cam_to_optic_reference_distance,
+                    reference_pixel_key=reference_pixel_key,
+                    output_directory=ft.join(primary_folder, "9_sofast_data_compare"),
+                    checkpoint_directory=checkpoint_folder,
+                    checkpoint_file="rotate_translate_camera_adjust_checkpoint.json",
+                )
+
+                checkpoint_main_data["Completed_Steps"].append("lookfast_camera_adjust")
+                lbt.save_checkpoint(
+                    checkpoint_folder=checkpoint_folder,
+                    checkpoint_file_name=checkpoint_main_name,
+                    checkpoint_data=checkpoint_main_data,
+                )
+                logger.info(
+                    "Time to Complete Rotate/Translate Adjustment Calculations: %s", str(time.time() - start_time)
+                )
+
                 '''
+                
                 module code steps:
                 read in camera params to make camera object
                 read in celestial vector data

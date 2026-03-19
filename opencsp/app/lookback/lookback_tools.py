@@ -20,6 +20,7 @@ import skyfield.api as skf
 import numpy as np
 from tqdm import tqdm
 import cv2 as cv
+from scipy.spatial.transform import Rotation
 
 
 def logging_setup(log_folder: str, log_file_name: str = "error_log.txt", log_type=DEBUG):
@@ -197,6 +198,10 @@ def custom_serializer(obj):
         elif isinstance(obj, set):
             return list(obj)  # Convert set to list
 
+        # Handle Rotation objects
+        elif isinstance(obj, Rotation):
+            return {"__rotation__": True, "quat": obj.as_quat().tolist()}  # Serialize as quaternion
+
         # Unsupported type
         else:
             # logger.error("Unsupported type encountered: %r", type(obj), exc_info=True)
@@ -212,9 +217,19 @@ def custom_deserializer(obj):
     Custom deserializer to handle strings, datetime strings, numpy arrays, floats, integers, and sets.
     Converts JSON-compatible formats back into their original types.
     """
+    rotation = False
     for key, value in obj.items():
+        if rotation:
+            if key == 'quat' and isinstance(value, list):
+                rot_temp = Rotation.from_quat(value)  # Deserialize from quaternion
+                return rot_temp
+
+        # Handle Rotation objects
+        if isinstance(obj, dict) and "__rotation__" in key and value is True:
+            rotation = True
+
         # Handle numpy arrays (lists of numbers)
-        if isinstance(value, list) and all(isinstance(i, (int, float)) for i in value):
+        elif isinstance(value, list) and all(isinstance(i, (int, float)) for i in value):
             try:
                 obj[key] = np.array(value)  # Convert list back to numpy array
             except ValueError:
@@ -238,7 +253,7 @@ def custom_deserializer(obj):
             obj[key] = float(value)  # Ensure it's a float (redundant but explicit)
 
         # Handle integers explicitly
-        elif isinstance(value, int):
+        elif isinstance(value, int) and value is not bool:
             obj[key] = int(value)  # Ensure it's an integer (redundant but explicit)
 
     return obj

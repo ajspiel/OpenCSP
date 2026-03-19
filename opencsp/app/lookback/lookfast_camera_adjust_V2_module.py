@@ -1680,7 +1680,8 @@ def plot_heat_maps_mirror_looking_up_coords(vector_data, output_dir, debug_plots
         "coords": M_coords_xy_final_1,
         "slopes": M_slopes_xy_final_1,
     }
-
+    lbt.write_compressed_json(set_1_results, ft.join(output_dir, "set_1_final_RT.json.gz"))
+    # foo = lbt.read_compressed_json(ft.join(output_dir, "set_1_final_RT.json.gz"))
     set_2_results = {
         "slopes_rotation_combined": final_xy_align_rot_obj_2 * x_align_rot_obj_2 * M_look_axis_rot_2,
         "coords_rotation_combined": final_xy_align_rot_obj_2
@@ -1691,6 +1692,7 @@ def plot_heat_maps_mirror_looking_up_coords(vector_data, output_dir, debug_plots
         "coords": M_coords_xy_final_2,
         "slopes": M_slopes_xy_final_2,
     }
+    lbt.write_compressed_json(set_2_results, ft.join(output_dir, "set_2_final_RT.json.gz"))
 
     sofast_plotting(output_directory=ft.join(output_dir, "set_1"), solution_set=set_1_results)
     sofast_plotting(output_directory=ft.join(output_dir, "set_2"), solution_set=set_2_results)
@@ -2280,7 +2282,7 @@ def main(
 
 
 def main_original_script():
-    primary_folder = "//snl/Collaborative/NSTTF_Optics/Projects/_Directories/NSTTF_Optics_LookbackExEx/Experiments/2025-06_05_NsttfTunedFacetScan1dof/3_Post/DSC_0025"
+    primary_folder = "//snl/Collaborative/NSTTF_Optics/Projects/_Directories/NSTTF_Optics_LookbackExEx/Experiments/2025-06_05_NsttfTunedFacetScan1dof/3_Post/DSC_0025_lookfast"
     video_name = "DSC_0025.MOV"
     checkpoint_folder = os.path.join(primary_folder, "0_checkpoints")
     checkpoint_main_name = "lookback_main_checkpoint.json"
@@ -2674,4 +2676,4 @@ def main_original_script():
 
 if __name__ == "__main__":
     print("not intended to be run as a script any more. See lookfast_camera_adjust_V2.py instead.")
-    # main()
+    main_original_script()

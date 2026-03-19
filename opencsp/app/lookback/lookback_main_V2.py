@@ -474,47 +474,6 @@ def main():
                     "Time to Complete Rotate/Translate Adjustment Calculations: %s", str(time.time() - start_time)
                 )
 
-                '''
-                
-                module code steps:
-                read in camera params to make camera object
-                read in celestial vector data
-                pick arbitraty pixel for a horizon reference vector
-                read in masks for light, dark, and all_pixels image
-                calculate pixel pointing vectors for all pixels
-                set mask location with OpenCSP code
-                set expected corners in pixel coords
-                set expected corners in mirror coords
-                refine OpenCSP corners
-                Estimate camera pose from refined pixel corners and provided mirror coords
-                estimate mirror coordinates in 3D space based on pose estimation
-                first rotation from "optical axis pointing vector" and reference observer_to_optic_h vector
-                apply first rotation, resulting in an arbitrary rotation of x and y axis about cam optical axis / horizonal reference vector
-                binary search to find which additional rotation about rotated camera optical axis (now in horizonal coordinates)
-                    results in the x axis of transformed camera coordinates to have a minimal z-component. i.e. x axis of new camera coordinates in the horizonal XY plane
-                test first rotation for sanity check with function and output
-                apply the roll control rotation
-                vector plot of original camera coords, first rotation applied, and roll control rotation applied
-                extract data, apply sets of rotations (inverse) to convert horizonal data to camera coordinates and camera coordinates to mirror coordinates (coords, and slopes)
-                take extracted coords and slopes, rotate and align with mirror coordinate system and feed to sofast plotting
-
-                Inputs:
-                checkpoint_folder - need to use
-                checkpoint_name - need to use
-                compiled_celestial_data_path
-                output_data_path
-                output_plot_path
-                OpenCSP Camera Object
-                pixel_location_optical_axis
-                light mask
-                    dark mask -> zeros
-                    all_pixels -> from light mask
-                    identify expected corners from light mask???
-                OpenCSP reference mirror definition
-
-
-                '''
-
     print("here")
     # Need Lookfast camera adjust v2 section
 

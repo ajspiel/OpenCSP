@@ -13,6 +13,7 @@ import numpy as np
 from scipy.spatial.transform import Rotation
 
 from opencsp.common.lib.tool.log_tools import multiprocessing_logger
+import opencsp.common.lib.tool.file_tools as ft
 
 
 def logging_setup(log_folder: str, log_file_name: str = "error_log.txt", log_type=DEBUG):
@@ -847,6 +848,54 @@ def read_hdf5_datasets(file: str, datasets: list = None):
             data_dict = read_group(f)
 
     return data_dict
+
+
+def load_de430_ephemeris(ephemeris_path=None, filename="de430t.bsp"):
+    """
+    Load the DE430 ephemeris, optionally from a user-specified location.
+
+    Behavior:
+      1) If ephemeris_path is provided:
+           - If it's a directory: looks for <dir>/<filename>
+           - If it's a file: uses it directly
+         If found, loads from that explicit path.
+      2) Otherwise (or if not found there), falls back to the default Skyfield load:
+           skf.load(filename)
+
+    Parameters
+    ----------
+    ephemeris_path : str | pathlib.Path | None
+        Path to a directory containing the ephemeris file, or a full path to the file.
+    filename : str
+        Ephemeris filename to look for (default: "de430t.bsp").
+
+    Returns
+    -------
+    eph
+        Loaded ephemeris object from skyfield.api.Loader.load().
+
+    Raises
+    ------
+    FileNotFoundError
+        If an explicit path was provided but doesn't exist / isn't valid, and fallback also fails.
+    """
+    # 1) Try user-provided location (if any)
+    if ephemeris_path is not None:
+        p = ft.norm_path(ephemeris_path)
+
+        # If user provided a directory, append filename
+        if os.path.isdir(p):
+            candidate = ft.join(p, filename)
+        else:
+            candidate = p
+
+        if ft.file_exists(candidate, error_if_exists_as_dir=True):
+            # Use string path for widest compatibility with loaders
+            return skf.load(str(candidate))
+        # If not found, fall through to default behavior
+
+    # 2) Fallback to Skyfield's normal lookup/download/cache behavior
+    return skf.load(filename)
 
 
 logger = logging_setup(

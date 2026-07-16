@@ -25,54 +25,6 @@ logger = lbt.logging_setup(
 )
 
 
-def load_de430_ephemeris(ephemeris_path=None, filename="de430t.bsp"):
-    """
-    Load the DE430 ephemeris, optionally from a user-specified location.
-
-    Behavior:
-      1) If ephemeris_path is provided:
-           - If it's a directory: looks for <dir>/<filename>
-           - If it's a file: uses it directly
-         If found, loads from that explicit path.
-      2) Otherwise (or if not found there), falls back to the default Skyfield load:
-           skf.load(filename)
-
-    Parameters
-    ----------
-    ephemeris_path : str | pathlib.Path | None
-        Path to a directory containing the ephemeris file, or a full path to the file.
-    filename : str
-        Ephemeris filename to look for (default: "de430t.bsp").
-
-    Returns
-    -------
-    eph
-        Loaded ephemeris object from skyfield.api.Loader.load().
-
-    Raises
-    ------
-    FileNotFoundError
-        If an explicit path was provided but doesn't exist / isn't valid, and fallback also fails.
-    """
-    # 1) Try user-provided location (if any)
-    if ephemeris_path is not None:
-        p = ft.norm_path(ephemeris_path)
-
-        # If user provided a directory, append filename
-        if os.path.isdir(p):
-            candidate = ft.join(p, filename)
-        else:
-            candidate = p
-
-        if ft.file_exists(candidate, error_if_exists_as_dir=True):
-            # Use string path for widest compatibility with loaders
-            return skf.load(str(candidate))
-        # If not found, fall through to default behavior
-
-    # 2) Fallback to Skyfield's normal lookup/download/cache behavior
-    return skf.load(filename)
-
-
 def calculate_vectors_celestial_observer(
     celestial_object_name, target_location, observer_location, observation_time, ephemeris_file_path
 ):
@@ -91,7 +43,7 @@ def calculate_vectors_celestial_observer(
     """
     # Load ephemeris data (DE430 dataset)
     # eph = skf.load("de430t.bsp")  # DE430 ephemeris file
-    eph = load_de430_ephemeris(ephemeris_file_path)
+    eph = lbt.load_de430_ephemeris(ephemeris_file_path)
 
     # Define celestial object
     celestial_object = eph[celestial_object_name]
@@ -126,8 +78,8 @@ def calculate_vectors_celestial_observer(
     # Calculate position of the celestial object relative to the target
     earth = eph["earth"]
     target_position_vec = earth + target
-    target_position_bary = target_position_vec.at(observation_time)
-    target_obsv_celest = target_position_bary.observe(celestial_object)
+    target_position_bary = target_position_vec.at(observation_time)  # Barycentric Coordinate System
+    target_obsv_celest = target_position_bary.observe(celestial_object)  # Astrometric Position
     target_obsv_celest_apparent = target_obsv_celest.apparent()
 
     celestial_to_target = target_position_vec.at(observation_time).observe(celestial_object).position.km

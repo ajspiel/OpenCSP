@@ -39,6 +39,11 @@ import contrib.app.LookFast.celestial_vectors as astro_math
 # import opencsp.app.lookback.lookfast_camera_adjust_V2_module as rt_cam_adjust
 import contrib.app.LookFast.lookfast_camera_adjust_V2_module as rt_cam_adjust
 
+import contrib.app.LookFast.lookfast_plotting_opencsp_standard as standard_plotting
+
+# import opencsp.app.lookback.lookfast_camera_adjust_V2_module as rt_cam_adjust
+import contrib.app.LookFast.lookfast_camera_adjust_V2_module as rt_cam_adjust
+
 # import opencsp.app.lookback.lookfast_pointing_estimate_V1 as pointing_math
 import contrib.app.LookFast.lookfast_pointing_estimate_V1 as pointing_math
 
@@ -47,7 +52,7 @@ logger = lbt.logging_setup(
     log_folder=ft.join(os.getcwd(), "error_logs"), log_file_name="error_log_lookfast_main_debug.txt", log_type=DEBUG
 )
 
-PATH_KEYS = {"primary_folder", "og_video_path", "file_camera", "video_path", "ephem_path"}
+PATH_KEYS = {"primary_folder", "og_video_path", "file_camera", "video_path", "ephem_path", "opencsp_plotting_settings"}
 
 
 def select_file(window_title="Select a File", file_types=None):
@@ -416,6 +421,7 @@ def checkpoint_has_new_levels(
         "celestial_vectors_data_levels": ana_req,
         "celestial_vectors_plots_levels": ana_req,
         "lookfast_camera_adjust_levels": ana_req,
+        "opencsp_backend_plots_levels": ana_req,
         "pointing_estimate_levels": ana_req,
     }
 
@@ -563,7 +569,7 @@ def main(args):
     cam_to_optic_reference_distance = args.cam_to_optic_reference_distance  # meters
 
     if "extracted_video_frames" in checkpoint_main_data["Completed_Steps"] or args.extract_video_frames is False:
-        logger.info("Skipped Already Completed Video Frame Extraction : %s", str(time.time() - start_time))
+        logger.info("Skipped Video Frame Extraction : %s", str(time.time() - start_time))
         if ft.file_exists(input_dir_body_ext=ft.join(primary_folder, "interactive_scrubber_selections.json")):
             scrubber_details = lbt.read_json(ft.join(primary_folder, "interactive_scrubber_selections.json"))
             reference_pixel_key = scrubber_details['reference_pixel']
@@ -590,10 +596,10 @@ def main(args):
 
         write_ini_file_from_args(args, scrubber_details, ft.join(primary_folder, "full_processing_settings.ini"))
 
-    if ("coverage_maps" in checkpoint_main_data["Completed_Steps"] or args.coverage_maps is False) and has_new[
+    if ("coverage_maps" in checkpoint_main_data["Completed_Steps"] or args.coverage_maps is True) and has_new[
         "coverage_maps_levels"
     ] is False:
-        logger.info("Skipped Already Completed Coverage Maps : %s", str(time.time() - start_time))
+        logger.info("Skipped Coverage Maps : %s", str(time.time() - start_time))
         if ft.file_exists(ft.join(primary_folder, "threshold_bmap_mask_paths.json")):
             thresh_maps_paths = lbt.read_json(ft.join(primary_folder, "threshold_bmap_mask_paths.json"))
     else:
@@ -627,7 +633,7 @@ def main(args):
         logger.info("Time to Complete Coverage Maps: %s", str(time.time() - start_time))
 
     if "accelerated_video" in checkpoint_main_data["Completed_Steps"] or args.accelerated_video is False:
-        logger.info("Skipped Already Completed Accelerated Video: %s", str(time.time() - start_time))
+        logger.info("Skipped Accelerated Video: %s", str(time.time() - start_time))
     else:
         accel_factor = 10
         lbt.accelerate_video_ffmpeg_no_audio(
@@ -645,10 +651,12 @@ def main(args):
         )
         logger.info("Time to Complete Accelerated Video: %s", str(time.time() - start_time))
 
-    if ("time_history" in checkpoint_main_data["Completed_Steps"] or args.time_history is False) and has_new[
-        "time_history_levels"
-    ] is False:
-        logger.info("Skipped Already Completed Time History: %s", str(time.time() - start_time))
+    if (
+        "time_history" in checkpoint_main_data["Completed_Steps"]
+        or args.time_history is False
+        or has_new["time_history_levels"] is False
+    ):
+        logger.info("Skipped Time History: %s", str(time.time() - start_time))
     else:
         missing_levels = fractions
         if has_new["time_history_levels"] is True:
@@ -673,10 +681,12 @@ def main(args):
         )
         logger.info("Time to Complete Time History Arrays: %s", str(time.time() - start_time))
 
-    if ("pixel_transitions" in checkpoint_main_data["Completed_Steps"] or args.pixel_transitions is False) and has_new[
-        "pixel_transition_levels"
-    ] is False:
-        logger.info("Skipped Already Completed Transition History: %s", str(time.time() - start_time))
+    if (
+        "pixel_transitions" in checkpoint_main_data["Completed_Steps"]
+        or args.pixel_transitions is False
+        or has_new["pixel_transition_levels"] is False
+    ):
+        logger.info("Skipped Transition History: %s", str(time.time() - start_time))
     else:
         missing_levels = analysis_level_keys
         if has_new["pixel_transition_levels"] is True:
@@ -721,9 +731,11 @@ def main(args):
         )
 
     if (
-        "pixel_transition_plots" in checkpoint_main_data["Completed_Steps"] or args.pixel_transition_plots is False
-    ) and has_new["pixel_transition_plot_levels"] is False:
-        logger.info("Skipped Already Completed Transition Plots: %s", str(time.time() - start_time))
+        "pixel_transition_plots" in checkpoint_main_data["Completed_Steps"]
+        or args.pixel_transition_plots is False
+        or has_new["pixel_transition_plot_levels"] is False
+    ):
+        logger.info("Skipped Transition Plots: %s", str(time.time() - start_time))
     else:
         missing_levels = analysis_level_keys
         if "pixel_transition_plot_levels" in has_new:
@@ -764,9 +776,11 @@ def main(args):
         )
 
     if (
-        "celestial_vectors_data" in checkpoint_main_data["Completed_Steps"] or args.celestial_vectors_data is False
-    ) and has_new["celestial_vectors_data_levels"] is False:
-        logger.info("Skipped Already Completed Celestial Vector Processing: %s", str(time.time() - start_time))
+        "celestial_vectors_data" in checkpoint_main_data["Completed_Steps"]
+        or args.celestial_vectors_data is False
+        or has_new["celestial_vectors_data_levels"] is False
+    ):
+        logger.info("Skipped Celestial Vector Processing: %s", str(time.time() - start_time))
     else:
         missing_levels = analysis_level_keys
         if "celestial_vectors_data_levels" in has_new:
@@ -821,9 +835,11 @@ def main(args):
         )
 
     if (
-        "celestial_vectors_plots" in checkpoint_main_data["Completed_Steps"] or args.celestial_vectors_plots is False
-    ) and has_new["celestial_vectors_plots_levels"] is False:
-        logger.info("Skipped Already Completed Celestial Vector Plotting: %s", str(time.time() - start_time))
+        "celestial_vectors_plots" in checkpoint_main_data["Completed_Steps"]
+        or args.celestial_vectors_plots is False
+        or has_new["celestial_vectors_plots_levels"] is False
+    ):
+        logger.info("Skipped Celestial Vector Plotting: %s", str(time.time() - start_time))
     else:
         missing_levels = analysis_level_keys
         if "celestial_vectors_plots_levels" in has_new:
@@ -874,9 +890,11 @@ def main(args):
         )
 
     if (
-        "lookfast_camera_adjust" in checkpoint_main_data["Completed_Steps"] or args.lookfast_camera_adjust is False
-    ) and has_new["lookfast_camera_adjust_levels"] is False:
-        logger.info("Skipped Already Completed Lookfast Camera Adjustments: %s", str(time.time() - start_time))
+        "lookfast_camera_adjust" in checkpoint_main_data["Completed_Steps"]
+        or args.lookfast_camera_adjust is False
+        or has_new["lookfast_camera_adjust_levels"] is False
+    ):
+        logger.info("Skipped Lookfast Camera Adjustments: %s", str(time.time() - start_time))
     else:
         missing_levels = analysis_level_keys
         if "lookfast_camera_adjust_levels" in has_new:
@@ -894,7 +912,7 @@ def main(args):
                 raise ValueError("Too many binary map mask files match the analysis fraction key")
             else:
 
-                rt_cam_adjust.main(
+                solution_set_1_path, solution_set_2_path = rt_cam_adjust.main(
                     camera_obj=cam,
                     light_mask_path=mask_file_path[0],
                     vec_data_path=ft.join(
@@ -927,10 +945,87 @@ def main(args):
             checkpoint_data=checkpoint_main_data,
         )
 
-    if ("pointing_estimate" in checkpoint_main_data["Completed_Steps"] or args.pointing_estimate is False) and has_new[
-        "pointing_estimate_levels"
-    ] is False:
-        logger.info("Skipped Already Completed Pointing Estimate Level: %s", str(time.time() - start_time))
+    if (
+        "OpenCSP_backend_plotting" in checkpoint_main_data["Completed_Steps"]
+        or args.opencsp_backend_plots is False
+        or has_new["opencsp_backend_plots_levels"] is False
+    ):
+        logger.info("Skipped OpenCSP Plotting: %s", str(time.time() - start_time))
+    else:
+        missing_levels = analysis_level_keys
+        if "opencsp_backend_plots_levels" in has_new:
+            missing_levels = chkpt_args_diff["opencsp_backend_plots_levels"]["missing"]
+
+        for mask_key in missing_levels:
+            # mask_key = fraction_to_key(level)
+            mask_file_path = [fp for fp in thresh_maps_paths if mask_key in os.path.basename(fp)]
+
+            if mask_key in checkpoint_main_data["opencsp_backend_plots_levels"]:
+                logger.info("Skipping completed analysis fraction OpenCSP Backend Plotting levels: %s", str(mask_key))
+                continue
+
+            if len(mask_file_path) > 1:
+                raise ValueError("Too many binary map mask files match the analysis fraction key")
+            else:
+
+                solution_set_1_path = ft.join(
+                    primary_folder, "9_sofast_data_compare", mask_key, "mirror_RT_align", "mir_solution_set_1.json.gz"
+                )
+                solution_set_2_path = ft.join(
+                    primary_folder, "9_sofast_data_compare", mask_key, "mirror_RT_align", "mir_solution_set_2.json.gz"
+                )
+
+                try:
+                    standard_plotting.opencsp_standard_plotting(
+                        output_directory=ft.join(
+                            primary_folder,
+                            "9_sofast_data_compare",
+                            mask_key,
+                            "mirror_RT_align",
+                            "single_camera_solution_set_1",
+                        ),
+                        solution_set=solution_set_1_path,
+                        plot_configuration_file=args.opencsp_plotting_settings,
+                    )
+                except Exception as e:
+                    logger.error("Error plotting single camera solution set 1: %s", e, exc_info=True)
+
+                try:
+                    standard_plotting.opencsp_standard_plotting(
+                        output_directory=ft.join(
+                            primary_folder,
+                            "9_sofast_data_compare",
+                            mask_key,
+                            "mirror_RT_align",
+                            "single_camera_solution_set_2",
+                        ),
+                        solution_set=solution_set_2_path,
+                        plot_configuration_file=args.opencsp_plotting_settings,
+                    )
+                except Exception as e:
+                    logger.error("Error plotting single camera solution set 2: %s", e, exc_info=True)
+
+                checkpoint_main_data["opencsp_backend_plots_levels"].extend([mask_key])
+                lbt.save_checkpoint(
+                    checkpoint_folder=checkpoint_folder,
+                    checkpoint_file_name=checkpoint_main_name,
+                    checkpoint_data=checkpoint_main_data,
+                )
+                logger.info("Time to Complete Analysis Level Standard Plot Output: %s", str(time.time() - start_time))
+
+        checkpoint_main_data["Completed_Steps"].append("OpenCSP_backend_plotting")
+        lbt.save_checkpoint(
+            checkpoint_folder=checkpoint_folder,
+            checkpoint_file_name=checkpoint_main_name,
+            checkpoint_data=checkpoint_main_data,
+        )
+
+    if (
+        "pointing_estimate" in checkpoint_main_data["Completed_Steps"]
+        or args.pointing_estimate is False
+        or has_new["pointing_estimate_levels"] is False
+    ):
+        logger.info("Skipped Pointing Estimate Level: %s", str(time.time() - start_time))
     else:
         missing_levels = analysis_level_keys
         if "pointing_estimate_levels" in has_new:
@@ -1079,7 +1174,13 @@ def build_parser():
         default=None,
         help="File path of de430t.bsp ephemeris file for celestial body references.",
     )
-
+    p.add_argument(
+        "-ocsp_plot_settings_path",
+        "--opencsp_plotting_settings_path",
+        dest="opencsp_plotting_settings",
+        default=None,
+        help="File path of OpenCSP standard plot output settings path including ideal mirror definition, for plotting and comparisons.",
+    )
     p.add_argument(
         "-ifile",
         "--interactive-file_name",
@@ -1300,6 +1401,13 @@ def build_parser():
         help="Processing section to apply camera model, align coordinate systems, align data with OpenCSP conventions, and plot data.",
     )
     p.add_argument(
+        "--run-lookfast-opencsp-backend-plots",
+        dest="opencsp_backend_plots",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Processing section to plot data in OpenCSP conventions.",
+    )
+    p.add_argument(
         "--run-pointing-estimate",
         dest="pointing_estimate",
         action=argparse.BooleanOptionalAction,
@@ -1342,6 +1450,42 @@ def validate_args(args):
     missing = [k for k in required if getattr(args, k, None) in (None, "")]
     if missing:
         raise SystemExit(f"Missing required settings: {missing}")
+
+
+def wrapped_launch(wrapper_setting_file_from_list):
+    """This function wraps the main functionality of this script so that multiple
+    settings files can be selected and passed through and the code will run in series for each settings file.
+
+    Parameters
+    ----------
+    settings_file_path : string -> file path to ".ini" settings file
+    """
+    # Build the full parser (should include ALL arguments main() expects)
+    parser = build_parser()
+
+    # Pass 1: parse only to learn whether a settings file was provided
+    pre_args, _unknown = parser.parse_known_args()
+
+    if not wrapper_setting_file_from_list:
+        raise SystemExit("A settings file must be specified.")
+
+    pre_args.settings_path = wrapper_setting_file_from_list
+
+    # Load INI and set as defaults (so CLI can override)
+    ini_settings = parse_config(pre_args.settings_path)
+    parser.set_defaults(**ini_settings)
+
+    # Pass 2: parse again with defaults populated from INI
+    args = parser.parse_args()
+    args.settings_path = pre_args.settings_path  # ensure it’s always present/consistent
+
+    # Validate and run
+    validate_args(args)
+
+    main(args)
+
+    logger.info("Finished LookFast Processing Script: %s", time.strftime("%H:%M:%S", time.localtime()))
+    logger.info("Batch File Processed: %s", wrapper_setting_file_from_list)
 
 
 if __name__ == "__main__":

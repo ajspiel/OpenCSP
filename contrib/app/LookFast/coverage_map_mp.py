@@ -83,7 +83,7 @@ def compile_binary_maps(output_folder, threshold_fractions, prefix):
         batch_files = [
             os.path.join(output_folder, f)
             for f in os.listdir(output_folder)
-            if f.startswith(f"{prefix}_binary_map_{int(threshold_fraction * 100):02d}")
+            if f.startswith(f"{prefix}_binary_map_{int(threshold_fraction * 100):02d}") and f.endswith(".png")
         ]
 
         # Combine all batch files

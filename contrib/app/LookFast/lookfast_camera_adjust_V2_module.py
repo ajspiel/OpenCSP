@@ -2768,6 +2768,11 @@ def main(
         checkpoint_data["Lookfast_RT_Alignment"].append("mirror_RT_align")
         lbt.save_checkpoint(checkpoint_directory, checkpoint_file, checkpoint_data, print_path=False)
 
+    return [
+        ft.join(output_directory, "mirror_RT_align", "mir_solution_set_1.json.gz"),
+        ft.join(output_directory, "mirror_RT_align", "mir_solution_set_2.json.gz"),
+    ]
+
 
 def main_original_script():
     primary_folder = "//snl/Collaborative/NSTTF_Optics/Projects/_Directories/NSTTF_Optics_LookbackExEx/Experiments/2025-06_05_NsttfTunedFacetScan1dof/3_Post/DSC_0025_lookfast"

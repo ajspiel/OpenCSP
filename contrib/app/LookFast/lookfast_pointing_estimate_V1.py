@@ -7,6 +7,7 @@ A perfectly focused and made optic would have each and every beamlet produce the
 
 import os
 import math
+import copy
 from typing import Dict, Any, Tuple, Optional, List
 from zoneinfo import ZoneInfo
 from dataclasses import dataclass
@@ -18,6 +19,7 @@ from tqdm import tqdm
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
+from matplotlib.patches import Ellipse
 
 
 import opencsp.common.lib.tool.file_tools as ft
@@ -26,7 +28,8 @@ import opencsp.common.lib.tool.file_tools as ft
 import contrib.app.LookFast.lookback_tools as lbt
 
 
-@dataclass(frozen=True)
+# @dataclass(frozen=True)
+@dataclass()
 class EllipticalSunSpot:
     """
     Rotated ellipse on a 2D wall.
@@ -43,6 +46,181 @@ class EllipticalSunSpot:
     b_m: float
     orientation_deg: float = 0.0
     center_xy: Tuple[float, float] = (0.0, 0.0)
+
+    def copy(self) -> "EllipticalSunSpot":
+        """
+        Return an independent copy of this EllipticalSunSpot object.
+
+        Since this dataclass is mutable, editing attributes on the copied object
+        will not affect the original object.
+
+        Returns
+        -------
+        EllipticalSunSpot
+            A deep copy of this elliptical sun spot.
+        """
+        return copy.deepcopy(self)
+
+    def copy_with(self, **changes) -> "EllipticalSunSpot":
+        """
+        Return an independent copy of this object with selected fields changed.
+
+        Examples
+        --------
+        new_spot = spot.copy_with(a_m=0.12, orientation_deg=75.0)
+        """
+        new_obj = copy.deepcopy(self)
+
+        for key, value in changes.items():
+            if not hasattr(new_obj, key):
+                raise AttributeError(f"{type(self).__name__!s} has no field {key!r}")
+            setattr(new_obj, key, value)
+
+        return new_obj
+
+    def plot(
+        self,
+        ax=None,
+        *,
+        show_axes: bool = True,
+        label_axes: bool = True,
+        label_angle: bool = True,
+        show_center: bool = True,
+        show_origin: bool = True,
+        ellipse_kwargs: dict = {"facecolor": "none", "edgecolor": "tab:orange", "linewidth": 2},
+    ):
+        """
+        Plot the elliptical sun spot.
+
+        Parameters
+        ----------
+        ax : matplotlib.axes.Axes, optional
+            Existing axes to plot on. If None, a new figure and axes are created.
+
+        show_axes : bool
+            If True, draw the major and minor semi-axes.
+
+        label_axes : bool
+            If True, label the semi-major axis a and semi-minor axis b.
+
+        label_angle : bool
+            If True, draw and label the orientation angle in degrees.
+
+        show_center : bool
+            If True, mark the center of the ellipse.
+
+        ellipse_kwargs : dict, optional
+            Additional keyword arguments passed to matplotlib.patches.Ellipse.
+
+        Returns
+        -------
+        ax : matplotlib.axes.Axes
+            The axes containing the plot.
+        """
+
+        if ax is None:
+            _, ax = plt.subplots()
+
+        if ellipse_kwargs is None:
+            ellipse_kwargs = {}
+
+        cx, cy = self.center_xy
+        theta = np.deg2rad(self.orientation_deg)
+
+        # Unit vectors along the rotated major and minor axes
+        major_dir = np.array([np.cos(theta), np.sin(theta)])
+        minor_dir = np.array([-np.sin(theta), np.cos(theta)])
+
+        # Draw ellipse
+        default_ellipse_kwargs = {"facecolor": "none", "edgecolor": "tab:orange", "linewidth": 2}
+        default_ellipse_kwargs.update(ellipse_kwargs)
+
+        ellipse = Ellipse(
+            xy=(cx, cy), width=2 * self.a_m, height=2 * self.b_m, angle=self.orientation_deg, **default_ellipse_kwargs
+        )
+        ax.add_patch(ellipse)
+
+        center = np.array([cx, cy])
+
+        # Major and minor semi-axis endpoints
+        major_end = center + self.a_m * major_dir
+        major_start = center - self.a_m * major_dir
+
+        minor_end = center + self.b_m * minor_dir
+        minor_start = center - self.b_m * minor_dir
+
+        if show_axes:
+            ax.plot(
+                [major_start[0], major_end[0]],
+                [major_start[1], major_end[1]],
+                color="tab:blue",
+                linestyle="--",
+                linewidth=1.5,
+                label="Major axis",
+            )
+
+            ax.plot(
+                [minor_start[0], minor_end[0]],
+                [minor_start[1], minor_end[1]],
+                color="tab:green",
+                linestyle="--",
+                linewidth=1.5,
+                label="Minor axis",
+            )
+
+        if show_center:
+            ax.plot(cx, cy, marker="o", color=ellipse_kwargs["edgecolor"], markersize=4)
+
+        if label_axes:
+            ax.text(major_end[0], major_end[1], f"  a = {self.a_m:.3g} m", color="tab:blue", va="center")
+
+            ax.text(minor_end[0], minor_end[1], f"  b = {self.b_m:.3g} m", color="tab:green", va="center")
+
+        if label_angle:
+            # Draw reference +x direction and angle arc
+            arc_radius = 0.35 * max(self.a_m, self.b_m)
+
+            ax.plot([cx, cx + arc_radius], [cy, cy], color="tab:red", linestyle=":", linewidth=1)
+
+            angle_values = np.linspace(0, theta, 100)
+            arc_x = cx + arc_radius * np.cos(angle_values)
+            arc_y = cy + arc_radius * np.sin(angle_values)
+
+            ax.plot(arc_x, arc_y, color="tab:red", linewidth=1.5)
+
+            label_theta = theta / 2
+            label_radius = 1.2 * arc_radius
+
+            ax.text(
+                cx + label_radius * np.cos(label_theta),
+                cy + label_radius * np.sin(label_theta),
+                f"{self.orientation_deg:.1f}°",
+                color="tab:red",
+                ha="center",
+                va="center",
+            )
+
+        if show_origin:
+            ax.plot(0, 0, marker="s", color="black", markersize=4)
+
+        # Set equal aspect ratio
+        ax.set_aspect("equal", adjustable="box")
+
+        # Estimate limits based on rotated ellipse extents
+        x_extent = np.sqrt((self.a_m * np.cos(theta)) ** 2 + (self.b_m * np.sin(theta)) ** 2)
+        y_extent = np.sqrt((self.a_m * np.sin(theta)) ** 2 + (self.b_m * np.cos(theta)) ** 2)
+
+        padding = 0.25 * max(self.a_m, self.b_m)
+
+        ax.set_xlim(cx - x_extent - padding, cx + x_extent + padding)
+        ax.set_ylim(cy - y_extent - padding, cy + y_extent + padding)
+        ax.grid()
+
+        ax.set_xlabel("x [m]")
+        ax.set_ylabel("y [m]")
+        ax.set_title("Elliptical Reflected Spot")
+
+        return ax
 
 
 def reflected_sun_spot_ellipse(
@@ -434,19 +612,32 @@ def fit_y_shifts_for_chord_length(
             spot_obj=spot_adj1, ax=ax, direction_deg=direction_deg, show=False
         )
         fig, ax, details = plot_ellipse_and_center_chord(
-            spot_obj=spot_adj2, ax=ax, direction_deg=direction_deg, show=True
+            spot_obj=spot_adj2, ax=ax, direction_deg=direction_deg, show=False
         )
-
-    return {
-        "shifts": (s1, s2),
-        "y_solutions": (y1, y2),
-        "chord_at_solutions": (L1, L2),
-        "chord_length_diffs": (e1, e2),
-        "n_solutions_found": int(min(2, len(refined_candidates))),
-        "scan_coarse": (ys, chords, diffs),
-        "scan_refined": refined_scans,
-        "bounds": (ymin, ymax),
-    }
+        return {
+            "shifts": (s1, s2),
+            "y_solutions": (y1, y2),
+            "chord_at_solutions": (L1, L2),
+            "chord_length_diffs": (e1, e2),
+            "n_solutions_found": int(min(2, len(refined_candidates))),
+            "scan_coarse": (ys, chords, diffs),
+            "scan_refined": refined_scans,
+            "bounds": (ymin, ymax),
+            "fig_obj": fig,
+            "ax_obj": ax,
+            "fig_details": details,
+        }
+    else:
+        return {
+            "shifts": (s1, s2),
+            "y_solutions": (y1, y2),
+            "chord_at_solutions": (L1, L2),
+            "chord_length_diffs": (e1, e2),
+            "n_solutions_found": int(min(2, len(refined_candidates))),
+            "scan_coarse": (ys, chords, diffs),
+            "scan_refined": refined_scans,
+            "bounds": (ymin, ymax),
+        }
 
 
 def plot_ellipse_and_center_chord(
@@ -871,6 +1062,8 @@ def plot_time_map_cropped(
 def plot_midpoint_offset_heatmap_tz(
     pixel_dict: Dict[str, Dict[str, Any]],
     ideal_mid_time: datetime,
+    value_key_start: str = None,
+    value_key_end: str = None,
     *,
     tz: ZoneInfo = ZoneInfo("America/Denver"),
     pad: int = 0,
@@ -920,8 +1113,8 @@ def plot_midpoint_offset_heatmap_tz(
 
     # Fill
     for (r, c), info in parsed:
-        start = ensure_tz(info.get("light_start_time", None), tz)
-        end = ensure_tz(info.get("light_end_time", None), tz)
+        start = ensure_tz(info.get(value_key_start if value_key_start is not None else "light_start_time", None), tz)
+        end = ensure_tz(info.get(value_key_end if value_key_end is not None else "light_end_time", None), tz)
         if start is None or end is None:
             continue
 
@@ -959,12 +1152,12 @@ def plot_midpoint_offset_heatmap_tz(
 
     fig, ax = plt.subplots(1, 1, figsize=(7, 6), constrained_layout=True)
     im = ax.imshow(delta, origin=origin, cmap=cm, extent=extent, vmin=vmin, vmax=vmax)
-    ax.set_title(f"Midpoint offset vs ideal ({units})\nideal = {ideal_mid_time.isoformat()}")
+    ax.set_title(f"Midpoint Offset vs Ideal ({units})\nIdeal = {ideal_mid_time.isoformat()}")
     ax.set_xlabel("col")
     ax.set_ylabel("row")
 
     cb = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-    cb.set_label(f"midpoint - ideal ({units})")
+    cb.set_label(f"Midpoint - Ideal ({units})")
 
     if show:
         plt.show()
@@ -1330,39 +1523,46 @@ def extract_vertical_shift_parallel(
         cm = plt.colormaps[cmap].copy()
         cm.set_bad(nan_color)
 
-        fig, ((ax0, ax1), (ax2, ax3)) = plt.subplots(2, 2, figsize=(8, 8))
+        fig, ((ax0, ax1), (ax2, ax3)) = plt.subplots(2, 2, figsize=(8, 8), layout="constrained")
 
         im0 = ax0.imshow(shift0, origin="upper", cmap=cm, extent=extent, aspect="equal", vmin=vmin, vmax=vmax)
-        ax0.set_title(value_key + " Shift map First")
+        ax0.set_title("First Solution")
         ax0.set_xlabel("col")
         ax0.set_ylabel("row")
         ax0.set_xlim(cmin_p - 0.5, cmax_p + 0.5)
         ax0.set_ylim(rmax_p + 0.5, rmin_p - 0.5)
-        fig.colorbar(im0, ax=ax0, shrink=0.9)
+        # cb0 = fig.colorbar(im0, ax=ax0, shrink=0.9)
+        # cb0.set_label("Vertical Shift [m]")
 
         im1 = ax1.imshow(shift1, origin="upper", cmap=cm, extent=extent, aspect="equal", vmin=vmin, vmax=vmax)
-        ax1.set_title(value_key + " Shift map Second")
+        ax1.set_title("Second Solution")
         ax1.set_xlabel("col")
         ax1.set_ylabel("row")
         ax1.set_xlim(cmin_p - 0.5, cmax_p + 0.5)
         ax1.set_ylim(rmax_p + 0.5, rmin_p - 0.5)
-        fig.colorbar(im1, ax=ax1, shrink=0.9)
+        # cb1 = fig.colorbar(im1, ax=ax1, shrink=0.9)
+        # cb1.set_label("Vertical Shift [m]")
 
         im2 = ax2.imshow(shiftmin, origin="upper", cmap=cm, extent=extent, aspect="equal", vmin=vmin, vmax=vmax)
-        ax2.set_title(value_key + " Shift map Min")
+        ax2.set_title("Minimum Solution")
         ax2.set_xlabel("col")
         ax2.set_ylabel("row")
         ax2.set_xlim(cmin_p - 0.5, cmax_p + 0.5)
         ax2.set_ylim(rmax_p + 0.5, rmin_p - 0.5)
-        fig.colorbar(im2, ax=ax2, shrink=0.9)
+        # cb2 = fig.colorbar(im2, ax=ax2, shrink=0.9)
+        # cb2.set_label("Vertical Shift [m]")
 
         im3 = ax3.imshow(shiftmax, origin="upper", cmap=cm, extent=extent, aspect="equal", vmin=vmin, vmax=vmax)
-        ax3.set_title(value_key + " Shift map Max")
+        ax3.set_title("Maximum Solution")
         ax3.set_xlabel("col")
         ax3.set_ylabel("row")
         ax3.set_xlim(cmin_p - 0.5, cmax_p + 0.5)
         ax3.set_ylim(rmax_p + 0.5, rmin_p - 0.5)
-        fig.colorbar(im3, ax=ax3, shrink=0.9)
+        # cb3 = fig.colorbar(im3, ax=ax3, shrink=0.9)
+        # cb3.set_label("Vertical Shift [m]")
+
+        cbar = fig.colorbar(im0, ax=[ax0, ax1, ax2, ax3], location="right", shrink=0.9, pad=0.02)
+        cbar.set_label("Vertical Shift [m]")
 
         if show:
             plt.show()
@@ -1860,7 +2060,8 @@ def pointing_estimate(
 if __name__ == "__main__":
     timing_data_temp_location = r"\\snl\Collaborative\NSTTF_Optics\Projects\_Directories\NSTTF_Optics_LookbackExEx\Experiments\2025-06_05_NsttfTunedFacetScan1dof\3_Post\ini_script_test_3\7_pixel_timing_interrogation\50\time_history_transition_parallel_50_final.json.gz"
     video_temp_path = r"\\snl\Collaborative\NSTTF_Optics\Projects\_Directories\NSTTF_Optics_LookbackExEx\Experiments\2025-06_05_NsttfTunedFacetScan1dof\3_Post\ini_script_test_3\DSC_0025.MOV"
-    output_dir = r"\\snl\Collaborative\NSTTF_Optics\Projects\_Directories\NSTTF_Optics_LookbackExEx\Experiments\2025-06_05_NsttfTunedFacetScan1dof\3_Post\ini_script_test_3\10_pointing_estimate"
+    output_dir = r"\\snl\Collaborative\NSTTF_Optics\Projects\_Directories\NSTTF_Optics_LookbackExEx\Experiments\2025-06_05_NsttfTunedFacetScan1dof\3_Post\ini_script_test_3\10_pointing_estimate\plot_cleanup"
+    ft.create_directories_if_necessary(output_dir)
     video_metadata_temp = lbt.extract_detailed_video_metadata(video_temp_path)
     camera_time_shift_temp = timedelta(0, 0, 0)
     timezone_temp = "America/Denver"
@@ -1887,6 +2088,47 @@ if __name__ == "__main__":
         orientation_deg=0,  # major axis aligned with +x (irrelevant if circle)
         center_xy=(0, 0),
     )
+    Ideal_spot_shift_right_full = Ideal_spot.copy_with(center_xy=(Ideal_spot.a_m, 0))
+    Ideal_spot_shift_right_partial = Ideal_spot.copy_with(center_xy=(Ideal_spot.a_m / 3, 0))
+    Ideal_spot_shift_left_full = Ideal_spot.copy_with(center_xy=(-1 * Ideal_spot.a_m, 0))
+    Ideal_spot_shift_left_partial = Ideal_spot.copy_with(center_xy=(-1 * Ideal_spot.a_m / 3, 0))
+
+    Ideal_spot_shift_up_partial = Ideal_spot.copy_with(center_xy=(0, Ideal_spot.b_m / 1.5))
+    Ideal_spot_shift_down_partial = Ideal_spot.copy_with(center_xy=(0, -1 * Ideal_spot.b_m / 1.5))
+
+    if False:
+        ideal_spot_axes = Ideal_spot.plot(show_axes=False, label_axes=False, label_angle=False, show_center=True)
+        step_1 = Ideal_spot_shift_right_full.plot(
+            show_axes=False, label_axes=False, label_angle=False, show_center=False
+        )
+        step_2 = Ideal_spot_shift_right_partial.plot(
+            show_axes=False, label_axes=False, label_angle=False, show_center=False
+        )
+        step_3 = Ideal_spot.plot(show_axes=False, label_axes=False, label_angle=False, show_center=True)
+        step_4 = Ideal_spot_shift_left_partial.plot(
+            show_axes=False, label_axes=False, label_angle=False, show_center=False
+        )
+        step_5 = Ideal_spot_shift_left_full.plot(
+            show_axes=False, label_axes=False, label_angle=False, show_center=False
+        )
+
+        ideal_spot_temp = Ideal_spot_shift_right_partial.plot(
+            ax=ideal_spot_axes,
+            show_axes=False,
+            label_axes=False,
+            label_angle=False,
+            show_center=True,
+            ellipse_kwargs={"facecolor": "none", "edgecolor": "tab:blue", "linewidth": 2},
+        )
+        ideal_spot_horizontal = Ideal_spot_shift_left_partial.plot(
+            ax=ideal_spot_temp,
+            show_axes=False,
+            label_axes=False,
+            label_angle=False,
+            show_center=True,
+            ellipse_kwargs={"facecolor": "none", "edgecolor": "tab:red", "linewidth": 2},
+        )
+
     Ideal_spot_chord_length = ellipse_chord_length_along_direction(
         Ideal_spot.a_m,
         Ideal_spot.b_m,
@@ -1906,14 +2148,48 @@ if __name__ == "__main__":
         shift_test_chord_length,
         n_grid=10001,
         direction_deg=traverse_direction,
-        show=False,
+        show=True,
         refine_factor=50,
         refine_half_window_pts=50,
     )
+    if False:
+        ideal_spot_axes_vertical = Ideal_spot.plot(
+            show_axes=False, label_axes=False, label_angle=False, show_center=True
+        )
+        ideal_spot_vertical_temp = Ideal_spot_shift_up_partial.plot(
+            ax=ideal_spot_axes_vertical,
+            show_axes=False,
+            label_axes=False,
+            label_angle=False,
+            show_center=True,
+            show_origin=False,
+            ellipse_kwargs={"facecolor": "none", "edgecolor": "tab:red", "linewidth": 2},
+        )
+        ideal_spot_horizontal = Ideal_spot_shift_down_partial.plot(
+            ax=ideal_spot_vertical_temp,
+            show_axes=False,
+            label_axes=False,
+            label_angle=False,
+            show_center=True,
+            show_origin=False,
+            ellipse_kwargs={"facecolor": "none", "edgecolor": "tab:blue", "linewidth": 2},
+        )
+
     fig_ito, axes_ito, arrays_ito = plot_midpoint_offset_heatmap_tz(
         results, ideal_mid_time=ideal_time, tz=tz, pad=2, units="seconds", show=False
     )
-    fig_ito.savefig(ft.join(output_dir, "ideal_time_midpoint_offset_full.png"))
+    fig_ito.savefig(ft.join(output_dir, "ideal_time_midpoint_offset_full.svg"), bbox_inches='tight', format='svg')
+    fig_itoa, axes_itoa, arrays_itoa = plot_midpoint_offset_heatmap_tz(
+        results,
+        ideal_mid_time=ideal_time,
+        value_key_start="cel_vec_light_start_time",
+        value_key_end="cel_vec_light_end_time",
+        tz=tz,
+        pad=2,
+        units="seconds",
+        show=False,
+    )
+    fig_itoa.savefig(ft.join(output_dir, "ideal_time_midpoint_offset_analysis.svg"), bbox_inches='tight', format='svg')
     # fig_mid, axes_mid, arrays_mid = plot_midpoint_offset_heatmap_autoideal(
     #     results, tz=tz, pad=2, units="seconds", show=False
     # )
@@ -1928,7 +2204,9 @@ if __name__ == "__main__":
         cmap="coolwarm",
         show=False,
     )
-    fig_horz_full.savefig(ft.join(output_dir, "ideal_time_midpoint_offset_distance_full.png"))
+    fig_horz_full.savefig(
+        ft.join(output_dir, "ideal_time_midpoint_offset_distance_full.svg"), bbox_inches='tight', format='svg'
+    )
 
     array_horz_full_stats = array_statistics(array_horz_full['array'])
     lbt.write_json(array_horz_full_stats, ft.join(output_dir, "ideal_time_midpoint_offset_distance_full_stats.json"))
@@ -1938,13 +2216,15 @@ if __name__ == "__main__":
         sun_trav_rad_s=omega,
         pixel_dict=results,
         value_key="cel_vec_light_midpoint_delta",
-        title="Horizontal Shift Analysis",
+        title="Horizontal Offset Analysis Interval",
         cbar_label="Horizontal Shift [m]",
         pad=2,
         cmap="coolwarm",
         show=False,
     )
-    fig_horz_ana.savefig(ft.join(output_dir, "ideal_time_midpoint_offset_distance_analysis.png"))
+    fig_horz_ana.savefig(
+        ft.join(output_dir, "ideal_time_midpoint_offset_distance_analysis.svg"), bbox_inches='tight', format='svg'
+    )
     array_horz_ana_stats = array_statistics(array_horz_ana['array'])
     lbt.write_json(array_horz_ana_stats, ft.join(output_dir, "ideal_time_midpoint_offset_distance_analysis_stats.json"))
 
@@ -1967,7 +2247,7 @@ if __name__ == "__main__":
         render=True,
         show=False,
     )
-    fig_v_shift_map_full.savefig(ft.join(output_dir, "vertical_shift_full.png"))
+    fig_v_shift_map_full.savefig(ft.join(output_dir, "vertical_shift_full.svg"), bbox_inches='tight', format='svg')
     v_shift_full_min_stats = array_statistics(v_shift_full_min)
     lbt.write_json(v_shift_full_min_stats, ft.join(output_dir, "vertical_shift_full_minimum_stats.json"))
     v_shift_full_max_stats = array_statistics(v_shift_full_max)
@@ -1986,7 +2266,7 @@ if __name__ == "__main__":
             show=False,
         )
     )
-    fig_v_shift_map_full.savefig(ft.join(output_dir, "vertical_shift_analysis.png"))
+    fig_v_shift_map_full.savefig(ft.join(output_dir, "vertical_shift_analysis.svg"), bbox_inches='tight', format='svg')
     v_shift_ana_min_stats = array_statistics(v_shift_ana_min)
     lbt.write_json(v_shift_ana_min_stats, ft.join(output_dir, "vertical_shift_analysis_minimum_stats.json"))
     v_shift_ana_max_stats = array_statistics(v_shift_ana_max)
@@ -2052,9 +2332,7 @@ if __name__ == "__main__":
     fig_scat_delta, axes_scat_delta = scatter_start_time_vs_duration(
         results, tz=tz, color="C2", duration_key="light_duration_delta", show=False
     )
-    fig_scat_delta.savefig(
-        ft.join(output_dir, "delta_between_durations_full_and_analysis_interval_vs_start_time_full.png")
-    )
+    fig_scat_delta.savefig(ft.join(output_dir, "durations_delta_full_and_analysis_vs_start_time_full.png"))
 
     plt.show()
     print("stop here")

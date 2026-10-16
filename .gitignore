@@ -34,3 +34,6 @@ doc/html/
 # user error logs and lookfast details
 de430t.bsp
 error_logs/
+
+# Continue VSCode Extension configuration files
+.continue/

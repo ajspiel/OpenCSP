@@ -37,3 +37,5 @@ error_logs/
 
 # Continue VSCode Extension configuration files
 .continue/
+
+mirror/data

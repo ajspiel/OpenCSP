@@ -916,13 +916,71 @@ def parse_value(value):
     Parse a string value from the ini file into a Python object if possible.
     If parsing fails, return the original string.
     """
-    try:
-        # Attempt to parse lists, tuples, numbers, bools, etc.
-        parsed = ast.literal_eval(value)
-        return parsed
-    except (ValueError, SyntaxError):
-        # Return as string if not a Python literal
-        return value
+    if isinstance(value, str):
+        # Handle empty strings
+        if not value.strip():
+            return value
+
+        # Normalize the string
+        value = value.strip()
+
+        # Handle boolean values
+        if value.lower() in ("true", "yes", "1"):
+            return True
+        elif value.lower() in ("false", "no", "0"):
+            return False
+
+        # Handle numeric values
+        try:
+            # Try to parse as an integer
+            return int(value)
+        except ValueError:
+            try:
+                # Try to parse as a float
+                return float(value)
+            except ValueError:
+                pass
+
+        # Handle lists and tuples
+        if value.startswith("[") and value.endswith("]"):
+            try:
+                # Parse as a list
+                parsed = ast.literal_eval(value)
+                if isinstance(parsed, list):
+                    return parsed
+            except (ValueError, SyntaxError):
+                pass
+        elif value.startswith("(") and value.endswith(")"):
+            try:
+                # Parse as a tuple
+                parsed = ast.literal_eval(value)
+                if isinstance(parsed, tuple):
+                    return parsed
+            except (ValueError, SyntaxError):
+                pass
+
+        # Handle comma-separated values as lists
+        if "," in value:
+            try:
+                # Split by comma and strip whitespace
+                items = [item.strip() for item in value.split(",")]
+                # Try to parse each item
+                parsed_items = []
+                for item in items:
+                    parsed_items.append(parse_value(item))
+                return parsed_items
+            except (ValueError, SyntaxError):
+                pass
+
+        # Fall back to ast.literal_eval for other cases
+        try:
+            parsed = ast.literal_eval(value)
+            return parsed
+        except (ValueError, SyntaxError):
+            pass
+
+    # Return the original value if parsing fails
+    return value
 
 
 def parse_config(config_file_path):

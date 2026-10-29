@@ -56,7 +56,7 @@ class HeliostatAzEl(HeliostatAbstract):
     @default_direction.setter
     def default_direction(self, new_default_direction: Rotation):
         self._default_direction = new_default_direction
-        self.set_transform_from_az_el(0, 0)
+        self.set_orientation_from_az_el(0, 0)
 
     @property
     def pivot(self):

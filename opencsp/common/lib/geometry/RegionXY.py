@@ -28,6 +28,28 @@ class RegionXY:
         """
         # Save loop in list
         self.loops = [loop]
+        self.name = None
+
+    def get_name(self):
+        """
+        Return name assignment as a string
+        Returns
+        -------
+        string
+            Region name
+        """
+        return str(self.name)
+
+    def add_name(self, name: str) -> None:
+        """
+        Add a name to the region object
+
+        Parameters
+        ----------
+        name : str
+            Alphanumeric name identifier for region.
+        """
+        self.name = name
 
     def add_loop(self, loop: LoopXY) -> None:
         """
@@ -238,3 +260,38 @@ class RegionXY:
 
     def __sub__(self, other: Vxy | numbers.Number) -> "RegionXY":
         return self + (-other)
+
+    def to_dict(self) -> dict:
+        """Convert the region to a dictionary representation for serialization."""
+        temp = {}
+        for loop_id, loop in enumerate(self.loops):
+            temp[str(loop_id)] = loop.vertices.data
+        temp.update({"name": self.get_name()})
+        return temp
+
+    @classmethod
+    def from_dict(cls, data: dict) -> 'RegionXY':
+        """Create a RegionXY object from a dictionary.
+
+        Parameters
+        ----------
+        data : dict
+            Dictionary containing region data.
+
+        Returns
+        -------
+        RegionXY
+            The created region object.
+        """
+
+        region = None
+        for key, values in data.items():
+            if key != "name":
+                loop = LoopXY.from_vertices(Vxy(values))
+                if region:
+                    region.add_loop(loop)
+                else:
+                    region = cls(loop)
+
+        region.add_name = data.get("name")
+        return region

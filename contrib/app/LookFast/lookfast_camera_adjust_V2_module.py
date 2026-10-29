@@ -135,51 +135,6 @@ def create_rotation_object(axis, angle_degrees):
     return rotation
 
 
-'''
-def binary_search_angle(vector, axis, function, tolerance=1e-6, max_iterations=1000):
-    """
-    Performs a binary search to find the angle that minimizes the z-component of the rotated vector.
-
-    Parameters:
-        vector (numpy.ndarray): The vector to rotate (1D array of shape (3,)).
-        axis (numpy.ndarray): The axis to rotate about (1D array of shape (3,)).
-        rotate_vector (function): Function to rotate the vector.
-        tolerance (float): The tolerance for the z-component to be considered zero.
-        max_iterations (int): Maximum number of iterations for the binary search.
-
-    Returns:
-        float: The angle in degrees that minimizes the z-component of the rotated vector.
-    """
-    # Define the search range for the angle (0 to 360 degrees)
-    low = 0.0
-    high = 360.0
-
-    for iteration in range(max_iterations):
-        # Calculate the midpoint angle
-        mid = (low + high) / 2.0
-
-        # Rotate the vector at the midpoint angle
-        rotated_vector = function(vector, axis, mid)
-
-        # Check the z-component of the rotated vector
-        z_component = rotated_vector[2]
-
-        if abs(z_component) < tolerance:
-            # If the z-component is close to zero, return the angle
-            return mid
-
-        # Update the search range based on the sign of the z-component
-        if z_component > 0:
-            high = mid
-        else:
-            low = mid
-
-    # If the search did not converge, return the midpoint of the final range
-    return (low + high) / 2.0
-
-'''
-
-
 def binary_search_angle_select(
     vector, axis, function, component_index=2, tolerance=1e-6, max_iterations=1000, num_initial_samples=36
 ):
@@ -2246,77 +2201,6 @@ def transform_to_xy_plane(points, z_orientation=1, reference_normal=None):
     return rotation
 
 
-'''
-def axis_aligned_mirror_points(points_xyz, angular_tol, step_size):
-    points_og = np.array(points_xyz)
-    points_og_xy = np.array(points_og[:, 0:2])
-
-    rect = cv2.minAreaRect(np.float32(points_og_xy))
-    box = cv2.boxPoints(rect)
-    # In test, points of box came out in CCW starting with the top left
-
-    vec_v_1 = box[0] - box[1]
-    vec_v_2 = box[3] - box[2]
-
-    vec_h_1 = box[2] - box[1]
-    vec_h_2 = box[3] - box[0]
-
-    rot_obj_v_1, _ = rotation_matrix_scipy(np.append(vec_v_1, 0), np.array([0, 1, 0]))
-    rot_obj_v_2, _ = rotation_matrix_scipy(np.append(vec_v_2, 0), np.array([0, 1, 0]))
-    rot_obj_h_1, _ = rotation_matrix_scipy(np.append(vec_h_1, 0), np.array([1, 0, 0]))
-    rot_obj_h_2, _ = rotation_matrix_scipy(np.append(vec_h_2, 0), np.array([1, 0, 0]))
-
-    obj_list = [rot_obj_v_1, rot_obj_v_2, rot_obj_h_1, rot_obj_h_2]
-    min_rot = None
-    test_pts = np.empty_like(points_og)
-    for index, thing in enumerate(obj_list):
-        test_pts = thing.apply(points_og)
-        rect_test = cv2.minAreaRect(np.float32(test_pts[:, 0:2]))
-
-        if min_rot is None:
-            min_rot = (rect_test[2], index)
-        else:
-            if rect_test[2] < min_rot[0]:
-                min_rot = (rect_test[2], index)
-
-    rot_angle = min_rot[0]
-    refine_obj = obj_list[min_rot[1]]
-    foo = refine_obj.as_rotvec()
-    while abs(rot_angle) > angular_tol:
-
-        foo_up = np.array([foo[0], foo[1], foo[2] + step_size])
-        foo_down = np.array([foo[0], foo[1], foo[2] - step_size])
-
-        foo_up = Rotation.from_rotvec(foo_up)
-        foo_down = Rotation.from_rotvec(foo_down)
-
-        refine_up = foo_up.apply(points_og)
-        refine_down = foo_down.apply(points_og)
-
-        refine_up_rect = cv2.minAreaRect(np.float32(refine_up[:, 0:2]))
-        refine_down_rect = cv2.minAreaRect(np.float32(refine_down[:, 0:2]))
-
-        min_index = np.argmin(np.array([abs(refine_up_rect[2]), abs(refine_down_rect[2])]))
-
-        if min_index == 0:
-            rot_angle = refine_up_rect[2]
-            foo = foo_up
-        elif min_index == 1:
-            rot_angle = refine_down_rect[2]
-            foo = foo_down
-        else:
-            break
-
-    if isinstance(foo, np.ndarray):
-        rot_obj = Rotation.from_rotvec(foo)
-        return rot_obj
-    elif isinstance(foo, Rotation):
-        return foo
-    else:
-        raise ValueError("Output was not the correct data type... Need to Debug")
-'''
-
-
 def _wrap_to_90(deg):
     """Map angle (deg) to [-45, 45] by exploiting 90-deg symmetry."""
     return ((deg + 45.0) % 90.0) - 45.0
@@ -2426,22 +2310,6 @@ def sofast_plotting(output_directory, solution_set):
     expected_facet_corners = Vxy(
         list(zip(box[3], box[2], box[1], box[0])), dtype=float
     )  # Counterclockwise Starting from Top Right Corner in [row, column] SOFAST Example uses this convention
-    '''
-    coords_max = np.max(centered_coords, axis=0)
-    coords_min = np.min(centered_coords, axis=0)
-
-    expected_facet_corners = Vxy(
-        list(
-            zip(
-                [coords_max[0], coords_max[1]],
-                [coords_min[0], coords_max[1]],
-                [coords_min[0], coords_min[1]],
-                [coords_max[1], coords_min[1]],
-            )
-        ),
-        dtype=float,
-    )  # Counterclockwise Starting from Top Right Corner in [row, column] SOFAST Example uses this convention
-    '''
 
     loop = LoopXY.from_vertices(expected_facet_corners)
     region = RegionXY(loop)
@@ -2556,7 +2424,7 @@ def camera_and_pixel_pointing(cam_obj, light_mask_path):
     expected_corners_facet_coords_manual = Vxyz(
         list(zip([0.606, 0.606, 0], [-0.606, 0.606, 0], [-0.606, -0.606, 0], [0.606, -0.606, 0])), dtype=float
     )  # Counterclockwise Starting from Top Right Corner in [row, column] SOFAST Example uses this convention
-
+    # TODO Remove this hard coded expected corner coordinates and associate it with facet definition in some ini file
     ##### setting expected corners
     '''
     expected_corners_manual = Vxy(

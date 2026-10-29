@@ -6,11 +6,14 @@ import time
 import subprocess
 from datetime import datetime, timezone
 from logging import DEBUG, ERROR
+import tkinter as tk
+from tkinter import filedialog
 
 import h5py
 import skyfield.api as skf
 import numpy as np
 from scipy.spatial.transform import Rotation
+import cv2
 
 from opencsp.common.lib.tool.log_tools import multiprocessing_logger
 import opencsp.common.lib.tool.file_tools as ft
@@ -52,6 +55,65 @@ def logging_setup(log_folder: str, log_file_name: str = "error_log.txt", log_typ
         raise RuntimeError(f"Failed to create logger: {e}")
 
     return logger
+
+
+def select_file(window_title="Select a File", file_types=None):
+    """
+    Opens a file dialog to select a file, with customizable window title and file types.
+
+    Parameters:
+        window_title (str): The title of the file dialog window (default is "Select a File").
+        file_types (str): A string of file types in the format "*.ext1 *.ext2", e.g., "*.jpg *.png".
+                         If None, defaults to allowing all files.
+
+    Returns:
+        str: The file path of the selected file, or None if no file was selected.
+    """
+    # Create a hidden root window
+    root = tk.Tk()
+    root.withdraw()  # Hide the root window
+
+    # Parse file types into the required format for filedialog
+    if file_types:
+        file_types_list = [("Custom File Types", file_types.lower().split()), ("All Files", "*.*")]
+    else:
+        file_types_list = [("All Files", "*.*")]
+
+    # Open the file dialog
+    file_path = filedialog.askopenfilename(title=window_title, filetypes=file_types_list)
+    if file_path:
+        logger.info("File Selected: %s", file_path)
+    else:
+        logger.info("File Selected: None")
+
+    root.destroy()
+    # Return the selected file path
+    return os.path.normpath(file_path) if file_path else None
+
+
+def select_dir(window_title="Select a Directory"):
+    """
+    Opens a file dialog to select a Directory,
+    Parameters:
+        window_title (str): The title of the file dialog window (default is "Select a File").
+
+    Returns:
+        str: The file path of the selected directory, or None if no directory was selected.
+    """
+    # Create a hidden root window
+    root = tk.Tk()
+    root.withdraw()  # Hide the root window
+
+    # Open the file dialog
+    dir_path = filedialog.askdirectory(title=window_title, initialdir=os.path.normpath(os.getcwd()))
+    if dir_path:
+        logger.info("Directory Selected: %s", dir_path)
+    else:
+        logger.info("Directory Selected: None")
+
+    root.destroy()
+    # Return the selected file path
+    return os.path.normpath(dir_path) if dir_path else None
 
 
 def frame_number_from_img_name(image_name_str):
@@ -213,6 +275,35 @@ def load_checkpoint(checkpoint_folder, checkpoint_file_name):
         return None
 
 
+def serialize_nested_dict(data):
+    """
+    Recursively serialize all values in a nested dictionary using custom_serializer.
+
+    Parameters:
+        data: The data to serialize (can be dict, list, or other types)
+
+    Returns:
+        The fully serialized data structure
+    """
+    if isinstance(data, dict):
+        # Create a new dictionary with serialized values
+        return {key: serialize_nested_dict(value) for key, value in data.items()}
+    elif isinstance(data, list):
+        # Create a new list with serialized items
+        return [serialize_nested_dict(item) for item in data]
+    elif isinstance(data, tuple):
+        # Convert tuples to lists (since JSON doesn't support tuples)
+        return [serialize_nested_dict(item) for item in data]
+    else:
+        # Apply custom serializer to individual values
+        try:
+            return custom_serializer(data)
+        except TypeError:
+            # If custom_serializer raises TypeError, return the original value
+            # This handles cases where the value is already JSON-serializable
+            return data
+
+
 def custom_serializer(obj):
     """
     Custom serializer to handle numpy arrays, datetime objects, floats, integers, and strings.
@@ -237,11 +328,20 @@ def custom_serializer(obj):
 
         # Handle strings
         elif isinstance(obj, str):
-            return str(obj)  # Ensure it's a string (JSON-compatible)
+            if ft.file_exists(obj, error_if_exists_as_dir=False) or ft.directory_exists(
+                obj, error_if_exists_as_file=False
+            ):
+                return ft.norm_path(obj)  # Check if it is like a file first
+            else:
+                return str(obj)  # Ensure it's a string (JSON-compatible)
 
         # Handle sets (convert to list for JSON compatibility)
         elif isinstance(obj, set):
             return list(obj)  # Convert set to list
+
+        # Handles booleans
+        elif isinstance(obj, bool):
+            return str(obj)  # Convert bool to string
 
         # Handle Rotation objects
         elif isinstance(obj, Rotation):
@@ -300,6 +400,10 @@ def custom_deserializer(obj):
         # Handle integers explicitly
         elif isinstance(value, int) and value is not bool:
             obj[key] = int(value)  # Ensure it's an integer (redundant but explicit)
+
+        # Handles booleans explicitly
+        elif isinstance(value, bool):
+            obj[key] = bool(value)  # Ensure it's a boolean (redundant but explicit)
 
     return obj
 
@@ -599,6 +703,57 @@ def extract_detailed_video_metadata(video_path):
         return None
 
 
+def scale_image_to_video(image_path, video_path, output_path=None):
+    """
+    Match an image's field of view to a video frame by cropping and scaling.
+
+    Args:
+        image_path (str): Path to the input image file
+        video_path (str): Path to the input video file
+        output_path (str): Path to save the output image
+
+    Returns:
+    opencv image array of the converted image
+    """
+    ft.create_directories_if_necessary(output_path)
+
+    # 1. Load the original image
+    img = cv2.imread(image_path)
+    h, w, _ = img.shape  # h=4000, w=6000 for your case
+
+    # 2. Get video dimensions
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        raise ValueError("Could not open the video file")
+
+    video_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    video_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    cap.release()
+
+    # 3. Calculate target height based on video aspect ratio
+    video_aspect = video_width / video_height
+    target_h = int(w / video_aspect)
+
+    # 4. Calculate crop amount
+    start_y = (h - target_h) // 2
+    end_y = start_y + target_h
+
+    # 5. Crop the image to match video aspect ratio
+    cropped = img[start_y:end_y, 0:w]
+
+    # 6. Scale to match video frame size
+    video_frame_size = (video_width, video_height)
+    final_video_size_image = cv2.resize(cropped, video_frame_size, interpolation=cv2.INTER_AREA)
+
+    if output_path:
+        # 7. Save the output image
+        cv2.imwrite(output_path, final_video_size_image)
+        logger.info("Successfully processed! Saved video-matched frame to %s", output_path)
+        return final_video_size_image
+    else:
+        return final_video_size_image
+
+
 def accelerate_video_ffmpeg_no_audio(input_path, output_path, playback_speed):
     """
     Accelerates the playback speed of a video using ffmpeg, removes audio, and saves the output.
@@ -635,6 +790,63 @@ def accelerate_video_ffmpeg_no_audio(input_path, output_path, playback_speed):
         logger.error("An error occurred while processing the video: %s", e, exc_info=True)
     except Exception as e:
         logger.error("An error occurred: %s", e, exc_info=True)
+
+
+def apply_pseudocolor_ffmpeg(input_path: str, output_path: str, preset: str = "magma"):
+    """
+    Applies a pseudocolor map to a video using ffmpeg and saves the output.
+
+    Parameters:
+        input_path (str): Path to the input video file.
+        output_path (str): Path to save the output video file.
+        preset (str): Pseudocolor preset to use. Default is "magma".
+                     Available options: 'magma', 'inferno', 'plasma', 'viridis', 'turbo',
+                     'cividis', 'range1', 'range2', 'shadows', 'highlights', 'solar',
+                     'nominal', 'preferred', 'total'
+        opacity (float): Opacity of output colors (0.0 to 1.0). Default is 1.0.
+    """
+    try:
+        # Validate preset
+        valid_presets = [
+            'magma',
+            'inferno',
+            'plasma',
+            'viridis',
+            'turbo',
+            'cividis',
+            'range1',
+            'range2',
+            'shadows',
+            'highlights',
+            'solar',
+            'nominal',
+            'preferred',
+            'total',
+        ]
+        if preset.lower() not in valid_presets:
+            raise ValueError(f"Invalid preset. Must be one of: {', '.join(valid_presets)}")
+
+        # Build the ffmpeg command
+        command = [
+            "ffmpeg",
+            "-i",
+            input_path,  # Input file
+            "-vf",
+            f"pseudocolor=p={preset}",  # Pseudocolor filter
+            "-an",  # Remove audio
+            output_path,
+        ]
+
+        # Run the ffmpeg command
+        subprocess.run(command, check=True)
+        logger.info("Pseudocolor video saved successfully at %s", output_path)
+
+    except subprocess.CalledProcessError as e:
+        logger.error("An error occurred while processing the video: %s", e, exc_info=True)
+        raise
+    except Exception as e:
+        logger.error("An error occurred: %s", e, exc_info=True)
+        raise
 
 
 def write_to_hdf5(data, filename):

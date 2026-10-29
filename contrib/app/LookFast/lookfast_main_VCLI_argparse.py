@@ -24,6 +24,10 @@ import contrib.app.LookFast.lookback_tools as lbt
 # from opencsp.app.lookback.interactive_video_info_extract_ref_pixel import interactive_video_select
 from contrib.app.LookFast.interactive_video_info_extract_ref_pixel import interactive_video_select
 
+from contrib.common.lib.cv.RegionDetector import RegionDetector
+
+import contrib.app.LookFast.lookfast_preprocessing_references as lf_pre
+
 # import opencsp.app.lookback.coverage_map_mp as cvg_map
 import contrib.app.LookFast.coverage_map_mp as cvg_map
 
@@ -52,66 +56,16 @@ logger = lbt.logging_setup(
     log_folder=ft.join(os.getcwd(), "error_logs"), log_file_name="error_log_lookfast_main_debug.txt", log_type=DEBUG
 )
 
-PATH_KEYS = {"primary_folder", "og_video_path", "file_camera", "video_path", "ephem_path", "opencsp_plotting_settings"}
-
-
-def select_file(window_title="Select a File", file_types=None):
-    """
-    Opens a file dialog to select a file, with customizable window title and file types.
-
-    Parameters:
-        window_title (str): The title of the file dialog window (default is "Select a File").
-        file_types (str): A string of file types in the format "*.ext1 *.ext2", e.g., "*.jpg *.png".
-                         If None, defaults to allowing all files.
-
-    Returns:
-        str: The file path of the selected file, or None if no file was selected.
-    """
-    # Create a hidden root window
-    root = tk.Tk()
-    root.withdraw()  # Hide the root window
-
-    # Parse file types into the required format for filedialog
-    if file_types:
-        file_types_list = [("Custom File Types", file_types.lower().split()), ("All Files", "*.*")]
-    else:
-        file_types_list = [("All Files", "*.*")]
-
-    # Open the file dialog
-    file_path = filedialog.askopenfilename(title=window_title, filetypes=file_types_list)
-    if file_path:
-        logger.info("File Selected: %s", file_path)
-    else:
-        logger.info("File Selected: None")
-
-    root.destroy()
-    # Return the selected file path
-    return os.path.normpath(file_path) if file_path else None
-
-
-def select_dir(window_title="Select a Directory"):
-    """
-    Opens a file dialog to select a Directory,
-    Parameters:
-        window_title (str): The title of the file dialog window (default is "Select a File").
-
-    Returns:
-        str: The file path of the selected directory, or None if no directory was selected.
-    """
-    # Create a hidden root window
-    root = tk.Tk()
-    root.withdraw()  # Hide the root window
-
-    # Open the file dialog
-    dir_path = filedialog.askdirectory(title=window_title, initialdir=os.path.normpath(os.getcwd()))
-    if dir_path:
-        logger.info("Directory Selected: %s", dir_path)
-    else:
-        logger.info("Directory Selected: None")
-
-    root.destroy()
-    # Return the selected file path
-    return os.path.normpath(dir_path) if dir_path else None
+PATH_KEYS = {
+    "primary_folder",
+    "og_video_path",
+    "file_camera",
+    "reference_image_path",
+    "reference_regions_json_path",
+    "video_path",
+    "ephem_path",
+    "opencsp_plotting_settings",
+}
 
 
 def normalize_path(value):
@@ -132,6 +86,7 @@ def normalize_path(value):
     return value
 
 
+'''
 def serialize_value(value):
     """
     Convert Python objects to strings suitable for writing to ini files.
@@ -150,6 +105,8 @@ def serialize_value(value):
     else:
         # Fallback to string conversion
         return str(value)
+
+'''
 
 
 def write_ini_file_from_args(args_namespace, additional_values, output_path, section_name="DEFAULT"):
@@ -171,7 +128,7 @@ def write_ini_file_from_args(args_namespace, additional_values, output_path, sec
     combined_dict = {**args_dict, **additional_values}
 
     # Serialize all values to strings
-    str_dict = {k: serialize_value(v) for k, v in combined_dict.items()}
+    str_dict = {k: lbt.custom_serializer(v) for k, v in combined_dict.items()}
 
     config = configparser.ConfigParser()
     config[section_name] = str_dict
@@ -441,14 +398,14 @@ def checkpoint_has_new_levels(
 def main(args):
 
     if args.primary_folder is None:
-        args.primary_folder = select_dir(window_title="Select Primary Output Directory")
+        args.primary_folder = lbt.select_dir(window_title="Select Primary Output Directory")
         primary_folder = args.primary_folder
     else:
         primary_folder = args.primary_folder
         ft.create_directories_if_necessary(primary_folder)
 
     if args.og_video_path is None:
-        args.og_video_path = select_file(
+        args.og_video_path = lbt.select_file(
             window_title="Select Original Video to Copy and Process", file_types="*.mov *.mp4"
         )
         ft.copy_file(input_dir_body_ext=args.og_video_path, output_dir=args.primary_folder)
@@ -463,8 +420,14 @@ def main(args):
         og_vid_dir, og_vid_name, og_vid_ext = ft.path_components(args.og_video_path)
 
     if args.file_camera is None:
-        args.file_camera = select_file(
+        args.file_camera = lbt.select_file(
             window_title="Select OpenCSP camera calibration file for dataset", file_types="*.h5"
+        )
+
+    if args.reference_image_path is None:
+        args.reference_image_path = lbt.select_file(
+            window_title="Select Reference Image to assist in mirror definition assignment without complete data coverage",
+            file_types="*.jpg *.png;*.gif *.bmp *.tiff",
         )
 
     data_output_folders = [
@@ -568,12 +531,91 @@ def main(args):
     cam = Camera.load_from_hdf(args.file_camera)
     cam_to_optic_reference_distance = args.cam_to_optic_reference_distance  # meters
 
-    if "extracted_video_frames" in checkpoint_main_data["Completed_Steps"] or args.extract_video_frames is False:
+    if (
+        "preprocessing" in checkpoint_main_data["Completed_Steps"]
+        or ft.file_exists(args.reference_image_path) is False
+        or args.reference_image_path is None
+        or ft.file_exists(args.reference_regions_json_path)
+    ):
+        logger.info("Skipped Reference Image User Interactive Preprocessing : %s", str(time.time() - start_time))
+        if ft.file_exists(input_dir_body_ext=ft.join(primary_folder, "reference_images", "region_data.json")):
+            pre_region_details = lf_pre.load_multiple_regions_from_files(
+                regions_json_file=ft.join(primary_folder, "reference_images", "region_data.json")
+            )
+        elif ft.file_exists(input_dir_body_ext=args.reference_regions_json_path):
+            pre_region_details = lf_pre.load_multiple_regions_from_files(args.reference_regions_json_path)
+            if ft.file_exists(ft.join(primary_folder, "reference_images", "reference_reginos_json_copy.json")):
+                pass
+            else:
+                ft.copy_file(
+                    input_dir_body_ext=args.reference_regions_json_path,
+                    output_dir=ft.join(primary_folder, "reference_images"),
+                    output_body_ext="reference_reginos_json_copy.json",
+                )
+            args.reference_regions_json_path = ft.join(
+                primary_folder, "reference_images", "reference_reginos_json_copy.json"
+            )
+        else:
+
+            if ft.file_exists(args.reference_image_path):
+                _, ref_img_name, ref_img_ext = ft.path_components(args.reference_image_path)
+                ft.copy_file(
+                    input_dir_body_ext=args.reference_image_path,
+                    output_dir=ft.join(primary_folder, "reference_images"),
+                    output_body_ext="reference_image_copy" + ref_img_ext,
+                )
+
+                args.reference_image_path = ft.join(
+                    primary_folder, "reference_images", ref_img_name + "_scaled_to_video_size" + ref_img_ext
+                )
+
+                _ = lbt.scale_image_to_video(
+                    image_path=args.reference_image_path,
+                    output_path=ft.join(
+                        primary_folder, "reference_images", ref_img_name + "_scaled_to_video_size" + ref_img_ext
+                    ),
+                )
+
+                pre_region_details = lf_pre.interactive_region_detection(
+                    input_image_path=ft.join(
+                        primary_folder, "reference_images", ref_img_name + "_scaled_to_video_size" + ref_img_ext
+                    ),
+                    output_dir=ft.join(primary_folder, "reference_images"),
+                    RD_canny_edges_gradient=100,
+                    RD_canny_non_edges_gradient=50,
+                    RD_edge_coarse_width=50,
+                    output_ppt_gen=True,
+                    debug=True,
+                )
+            else:
+                logger.info("No reference image selected, skipping interactive region detection")
+
+            checkpoint_main_data["Completed_Steps"].append("preprocessing")
+            lbt.save_checkpoint(
+                checkpoint_folder=checkpoint_folder,
+                checkpoint_file_name=checkpoint_main_name,
+                checkpoint_data=checkpoint_main_data,
+            )
+            logger.info("Time to Complete User Interactive Preprocessing: %s", str(time.time() - start_time))
+
+    elif "extracted_video_frames" in checkpoint_main_data["Completed_Steps"] or args.extract_video_frames is False:
         logger.info("Skipped Video Frame Extraction : %s", str(time.time() - start_time))
         if ft.file_exists(input_dir_body_ext=ft.join(primary_folder, "interactive_scrubber_selections.json")):
             scrubber_details = lbt.read_json(ft.join(primary_folder, "interactive_scrubber_selections.json"))
             reference_pixel_key = scrubber_details['reference_pixel']
     else:
+
+        if ft.file_exists(args.reference_image_path):
+            ft.copy_file(
+                args.reference_image_path,
+                ft.join(primary_folder, "reference_images", "reference_image_backup_copy.jpg"),
+            )
+            video_scaled_ref_img = lbt.scale_image_to_video(
+                image_path=args.reference_image_path,
+                output_path=ft.join(primary_folder, "reference_images", "reference_image_scaled_to_video.jpg"),
+            )
+        else:
+            logger.info("No reference image selected, skipping interactive region detection")
 
         scrubber_details = interactive_video_select(
             video_path=ft.join(primary_folder, og_vid_name + og_vid_ext),
@@ -1084,13 +1126,71 @@ def parse_value(value):
     Parse a string value from the ini file into a Python object if possible.
     If parsing fails, return the original string.
     """
-    try:
-        # Attempt to parse lists, tuples, numbers, bools, etc.
-        parsed = ast.literal_eval(value)
-        return parsed
-    except (ValueError, SyntaxError):
-        # Return as string if not a Python literal
-        return value
+    if isinstance(value, str):
+        # Handle empty strings
+        if not value.strip():
+            return value
+
+        # Normalize the string
+        value = value.strip()
+
+        # Handle boolean values
+        if value.lower() in ("true", "yes", "1"):
+            return True
+        elif value.lower() in ("false", "no", "0"):
+            return False
+
+        # Handle numeric values
+        try:
+            # Try to parse as an integer
+            return int(value)
+        except ValueError:
+            try:
+                # Try to parse as a float
+                return float(value)
+            except ValueError:
+                pass
+
+        # Handle lists and tuples
+        if value.startswith("[") and value.endswith("]"):
+            try:
+                # Parse as a list
+                parsed = ast.literal_eval(value)
+                if isinstance(parsed, list):
+                    return parsed
+            except (ValueError, SyntaxError):
+                pass
+        elif value.startswith("(") and value.endswith(")"):
+            try:
+                # Parse as a tuple
+                parsed = ast.literal_eval(value)
+                if isinstance(parsed, tuple):
+                    return parsed
+            except (ValueError, SyntaxError):
+                pass
+
+        # Handle comma-separated values as lists
+        if "," in value:
+            try:
+                # Split by comma and strip whitespace
+                items = [item.strip() for item in value.split(",")]
+                # Try to parse each item
+                parsed_items = []
+                for item in items:
+                    parsed_items.append(parse_value(item))
+                return parsed_items
+            except (ValueError, SyntaxError):
+                pass
+
+        # Fall back to ast.literal_eval for other cases
+        try:
+            parsed = ast.literal_eval(value)
+            return parsed
+        except (ValueError, SyntaxError):
+            pass
+
+    # Return the original value if parsing fails
+    return value
 
 
 def parse_config(config_file_path):
@@ -1159,6 +1259,20 @@ def build_parser():
         dest="file_camera",
         default=None,
         help="File path of the camera definition within OpenCSP camera calibration file conventions.",
+    )
+    p.add_argument(
+        "-ref_img",
+        "--reference-image-path",
+        dest="reference_image_path",
+        default=None,
+        help="File path to the reference photo taken before data capture to assist in the identification and alignment of data with mirror or mirror enselble definition if there is not complete data coverage across the mirror. This image may be taken with filters off the camera or adjusted image settings to pick up ambient lighting.",
+    )
+    p.add_argument(
+        "-ref_rgns",
+        "--reference-regions-json-path",
+        dest="reference__regions_json_path",
+        default=None,
+        help="File path to the reference region output file created with lookfast_preprocessing_references.py. This file should contain the best guess starting region for each mirror facet present in the analysis. Leave argument as 'None' to assign interactively before main processing.",
     )
     p.add_argument(
         "-video-path",
@@ -1447,6 +1561,11 @@ def validate_args(args):
         if not (isinstance(t, (list, tuple)) and len(t) == 3):
             raise SystemExit(f"{name} must be a 3-tuple like (deg,min,sec).")
 
+    for name in "ideal_time_spot_cross_camera":
+        t = getattr(args, name)
+        if not (isinstance(t, tuple) and len(t) == 6):
+            raise SystemExit(f"{name} must be a tuple like (yyyy, mm, dd, hh, mm, ss).")
+
     missing = [k for k in required if getattr(args, k, None) in (None, "")]
     if missing:
         raise SystemExit(f"Missing required settings: {missing}")
@@ -1499,7 +1618,7 @@ if __name__ == "__main__":
         if not sys.stdin.isatty():
             raise SystemExit("Error: --settings_path (-s) is required when running non-interactively.")
 
-        settings_file_path = select_file(
+        settings_file_path = lbt.select_file(
             window_title="Select a Setting.ini file for LookFast Processing", file_types="*.ini"
         )
         if not settings_file_path:

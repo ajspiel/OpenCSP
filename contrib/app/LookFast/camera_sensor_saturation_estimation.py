@@ -23,7 +23,7 @@ def solar_flux_ground_ASTM(am15_dir, am15_file_name):
 
 
 def solar_photon_flux_ground_ASTM(
-    am15_dir, am15_file_name, wavelength_transmission_coeff=0.95, wavelength_range=None, transmission_spectrum=None
+    am15_dir, am15_file_name, wavelength_scaling_coeff=1.0, wavelength_range=None, transmission_spectrum=None
 ):
     """
     Calculate solar photon flux at ground level using ASTM G173 data.
@@ -31,7 +31,7 @@ def solar_photon_flux_ground_ASTM(
     Parameters:
     - am15_dir: Directory containing the ASTM G173 file
     - am15_file_name: Name of the ASTM G173 Excel file
-    - wavelength_transmission_coeff: Flat transmission coefficient (used if transmission_spectrum is None)
+    - wavelength_scaling_coeff: Flat scaling coefficient (used if transmission_spectrum is None)
     - wavelength_range: Tuple of (min_wavelength, max_wavelength) in nm to integrate over
     - transmission_spectrum: Array of transmission coefficients corresponding to wavelengths
 
@@ -67,7 +67,7 @@ def solar_photon_flux_ground_ASTM(
             raise ValueError("Transmission spectrum length must match wavelength array length")
         tau_wave = transmission_spectrum
     else:
-        tau_wave = np.ones_like(direct_gnd_irrad) * wavelength_transmission_coeff
+        tau_wave = np.ones_like(direct_gnd_irrad) * wavelength_scaling_coeff
 
     # =============================================================================
     # SPECTRAL PHOTON FLUX DENSITY (The Integrand)
@@ -344,13 +344,14 @@ if __name__ == "__main__":
     facet_area = np.full(simulation_cases, 1.2192**2)  # m^2
     heliostat_beam_size = np.full(simulation_cases, 1)
 
+    wavelength_scaling_array = 1
     weather_attn_factor = 1
     camera_lens_diameter = 0.052  # meters for reflective ND 4.0 Optic Installed
 
     pfd_ground = solar_photon_flux_ground_ASTM(
         am15_dir=opencsp_path.opencsp_top_level_dir(),
         am15_file_name="ASTM_G173-23_Direct_Normal_and_Hemispherical_Irradiance_Standard_Air_Mass_1.5.xlsx",
-        wavelength_transmission_coeff=0.9,
+        wavelength_scaling_coeff=wavelength_scaling_array,
         wavelength_range=(280, 4000),
     )
     # For each camera model

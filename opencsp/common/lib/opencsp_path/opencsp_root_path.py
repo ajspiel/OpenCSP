@@ -31,6 +31,11 @@ def opencsp_doc_dir():
     )  # TODO BGB: will this always live next to the 'opencsp' directory?
 
 
+def opencsp_top_level_dir():
+    """The directory containing the opencsp top level directory."""
+    return os.path.join(opencsp_code_dir(), "..")
+
+
 def opencsp_large_data_example_dir():
     """The directory containing the opencsp example data, for examples that have very large data inputs."""
     example_data_dir: str = opencsp_settings["opencsp_root_path"]["large_data_example_dir"]

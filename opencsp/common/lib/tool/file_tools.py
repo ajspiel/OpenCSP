@@ -1335,7 +1335,7 @@ def read_csv_file(description, input_path, input_file_name, log_warning=True):
     return from_csv(description, input_path, input_file_name)
 
 
-def from_csv(description: str | None, input_path: str, input_file_name_ext: str):
+def from_csv(description: str | None, input_path: str, input_file_name_ext: str, header_lines: int | None):
     """Reads a csv file and returns the rows, including the header row.
 
     Concise example::
@@ -1360,6 +1360,7 @@ def from_csv(description: str | None, input_path: str, input_file_name_ext: str)
         description (str): printed to the log
         input_path (str): directory containing the file to read
         input_file_name_ext (str): name and extension of the file to read
+        header_lines (int): number of lines to skip at the top of the file
 
     Returns:
     --------
@@ -1375,6 +1376,11 @@ def from_csv(description: str | None, input_path: str, input_file_name_ext: str)
     data_rows: list[list[str]] = []
     with open(input_path_file) as csvfile:
         readCSV = csv.reader(csvfile, delimiter=",")
+        if header_lines:
+            # Skip the specified number of rows of metadata/headers
+            for _ in range(header_lines):
+                next(readCSV, None)
+
         for row in readCSV:
             data_rows.append(row)
     return data_rows
